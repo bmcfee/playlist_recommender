@@ -2,13 +2,84 @@
 \usepackage{fullpage}
 \usepackage{brian}
 
-\DeclareMathOperator{\diagb}{diagb}
-\DeclareMathOperator{\vectorize}{vec}
+\def\U{\ensuremath{\mathcal{U}}}
 
 \title{Personalized playlist modeling}
 \author{Brian McFee}
 
 \begin{document}
 \maketitle
+
+\section{Preliminaries}
+
+Let $\U$ denote the set of $m$ users, $\X$ denote the set of $n$ songs, and $\Y$ denote the set of playlists.
+Let $\H$ denote an undirected hypergraph over $(\X, \mathcal{E})$, where $\mathcal{E} \subseteq 2^\X$ is the
+collection of edges (attribute coincidence).
+
+\section{Personalized model}
+
+The hypergraph random walk model proceeds as follows:
+\begin{itemize}
+\item select an initial song $x_0 \in \X$
+\item select an edge $e \in \mathcal{E}$ such that $x_0 \in e$
+\item select the next song from $e$
+\item repeat...
+\end{itemize}
+
+We add two features to the previous model.  First, a bias term $b_i$ is included to model the global popularity of each
+song.  Next, we incorporate a latent factor model to capture individual user preferences for songs.
+
+\subsection{Model equations}
+
+Let $y_i = (x_0, x_1, \dots, x_T) \in Y$ denote a playlist, and let $i \in [m]$ index the corresponding user.
+The probability of generating $y_i$ given $u_i$ and the model parameters $\theta$ is defined as follows:
+\begin{align*}
+\P\left[Y = y_i \given U = i, \Theta = \theta \right] &= \P\left[X = x_0 \given U = i, \Theta = \theta\right]
+\prod_{t=1}^{T} \P\left[X_t = x_t \given X_{t-1}=x_{t-1}, U=i, \Theta=\theta \right]
+\end{align*}
+
+The initial state distribution is characterized as
+\begin{align*}
+\P\left[X = x_0 \given U = i, \Theta = \theta\right] &\defeq 
+\frac{\exp\left\{u_i\trans v_0 + b_0\right\}}{\sum_{j \in [n]} \exp\left\{u_i\trans v_j + b_j\right\}},
+\end{align*}
+where $u_i, v_j \in \R^{d}$ define the latent factor model, and $b$ is the song bias term.  Note that this is
+equivalent to fixing the initial edge $e_0$ to the uniform edge, which contains all songs.
+
+The bigram transition probability is defined by marginalizing over the edge set $\mathcal{E}$, as follows:
+\begin{align*}
+\P\left[X_{t}= x_t \given X_{t-1}=x_{t-1}, U=i, \Theta=\theta \right] &\defeq \sum_{e \in [m]} 
+\P\left[X_{t}=x_t \given E=e, U=i, \Theta=\theta\right]\\
+&\phantom{\defeq \sum_{e\in[m]}} \P\left[E=e \given X_{t-1} = x_{t-1}, \Theta=\theta\right]\\
+\P\left[X_t=x_t \given E=e, U=i, \Theta=\theta \right] &\defeq 
+\frac{\ind{x_t \in e}\exp\left\{u_i\trans v_t + b_t\right\}}{\sum_{j \in [n]}\ind{x_j \in e} \exp\left\{u_i\trans v_j + b_j\right\}},
+\\
+\P\left[E=e \given X_{t-1}=x_{t-1}, \Theta=\theta\right] &\defeq \frac{\ind{x_{t-1}\in e}\exp\{w_e\}}{ \sum_{f \in E} \ind{x_{t-1} \in f} \exp\{w_f\} }
+\end{align*}
+
+Finally, the model parameters are defined by the following prior distributions
+\begin{align*}
+u_i &\sim \N(0, \sigma_u I)\\
+v_j &\sim \N(0, \sigma_v I)\\
+b_j &\sim \N(0, \sigma_b)\\
+w_e &\sim \N(0, \sigma_w).\\
+\end{align*}
+
+This differs from the previous hypergraph random walk model in that the edge weights are log-normal instead of
+exponentially distributed.  \xx{This might work better as a Laplacian distribution.  The same goes for song bias $b_j$.}
+
+Note that all sums over edge membership indicators can be implemented as a dot product against the (sparse, constant) 
+song-edge incidence matrix $H \in \{0,1\}^{n, |\mathcal{E}|}$.
+
+\subsection{Special cases}
+The model above generalizes several standard(ish) models directly:
+\begin{itemize}
+\item Fixing $v_j, b_j$ to zero recovers the original hypergraph model, not counting the repetition constraint and
+change of prior.
+\item Fixing $v_j$ to zero enables item bias without personalization.
+\item Fixing $w_e = -\inf$ for $e \neq \text{uniform}$ recovers a standard stochastic recommender with a latent factor
+model.
+\end{itemize}
+
 
 \end{document}
