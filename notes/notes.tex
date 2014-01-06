@@ -20,10 +20,10 @@ collection of edges (attribute coincidence).
 
 The hypergraph random walk model proceeds as follows:
 \begin{itemize}
-\item select an initial song $x_0 \in \X$
-\item select an edge $e \in \mathcal{E}$ such that $x_0 \in e$
-\item select the next song from $e$
-\item repeat...
+\item select an initial subset $e \in \mathcal{E}$
+\item select a song $x$ from $e$
+\item select a new subset $e'$ containing $x$
+\item go to step 2
 \end{itemize}
 
 We add two features to the previous model.  First, a bias term $b_i$ is included to model the global popularity of each
@@ -32,29 +32,29 @@ song.  Next, we incorporate a latent factor model to capture individual user pre
 \subsection{Model equations}
 
 Let $y_i = (x_0, x_1, \dots, x_T) \in Y$ denote a playlist, and let $i \in [m]$ index the corresponding user.
-The probability of generating $y_i$ given $u_i$ and the model parameters $\theta$ is defined as follows:
+The probability of generating $y_i$ given $u_i$ and the model parameters $\theta \defeq \{u, v, b, w\}$ is defined as follows:
 \begin{align*}
 \P\left[Y = y_i \given U = i, \Theta = \theta \right] &= \P\left[X = x_0 \given U = i, \Theta = \theta\right]
 \prod_{t=1}^{T} \P\left[X_t = x_t \given X_{t-1}=x_{t-1}, U=i, \Theta=\theta \right]
 \end{align*}
 
-The initial state distribution is characterized as
+The initial edge distribution is characterized as
 \begin{align*}
-\P\left[X = x_0 \given U = i, \Theta = \theta\right] &\defeq 
-\frac{\exp\left\{u_i\trans v_0 + b_0\right\}}{\sum_{j \in [n]} \exp\left\{u_i\trans v_j + b_j\right\}},
+\P\left[E = e \given \Theta = \theta\right] & \defeq \frac{\phantom\sum \exp\{w_e\}}{\displaystyle\sum_{f\in \mathcal{E}} \exp\{w_f\}}
 \end{align*}
-where $u_i, v_j \in \R^{d}$ define the latent factor model, and $b$ is the song bias term.  Note that this is
-equivalent to fixing the initial edge $e_0$ to the uniform edge, which contains all songs.
+
+The probability of drawing a song from a given subset is characterized as
+\begin{align*}
+\P\left[X_t=x_t \given E=e, U=i, \Theta=\theta \right] &\defeq 
+\frac{\phantom\sum\ind{x_t \in e}\exp\left\{u_i\trans v_t + b_t\right\}}{\displaystyle\sum_{j \in \X}\ind{x_j \in e} \exp\left\{u_i\trans v_j + b_j\right\}},
+\end{align*}
 
 The bigram transition probability is defined by marginalizing over the edge set $\mathcal{E}$, as follows:
 \begin{align*}
-\P\left[X_{t}= x_t \given X_{t-1}=x_{t-1}, U=i, \Theta=\theta \right] &\defeq \sum_{e \in [m]} 
+\P\left[X_{t}= x_t \given X_{t-1}=x_{t-1}, U=i, \Theta=\theta \right] &\defeq \sum_{e \in \mathcal{E}} 
 \P\left[X_{t}=x_t \given E=e, U=i, \Theta=\theta\right]\\
-&\phantom{\defeq \sum_{e\in[m]}} \P\left[E=e \given X_{t-1} = x_{t-1}, \Theta=\theta\right]\\
-\P\left[X_t=x_t \given E=e, U=i, \Theta=\theta \right] &\defeq 
-\frac{\ind{x_t \in e}\exp\left\{u_i\trans v_t + b_t\right\}}{\sum_{j \in [n]}\ind{x_j \in e} \exp\left\{u_i\trans v_j + b_j\right\}},
-\\
-\P\left[E=e \given X_{t-1}=x_{t-1}, \Theta=\theta\right] &\defeq \frac{\ind{x_{t-1}\in e}\exp\{w_e\}}{ \sum_{f \in E} \ind{x_{t-1} \in f} \exp\{w_f\} }
+&\phantom{\defeq \sum}\quad\P\left[E=e \given X_{t-1} = x_{t-1}, \Theta=\theta\right]\\
+\P\left[E=e \given X_{t-1}=x_{t-1}, \Theta=\theta\right] &\defeq \frac{\phantom\sum\ind{x_{t-1}\in e}\exp\{w_e\}}{ \displaystyle\sum_{f \in \mathcal{E}} \ind{x_{t-1} \in f} \exp\{w_f\} }
 \end{align*}
 
 Finally, the model parameters are defined by the following prior distributions
@@ -66,10 +66,18 @@ w_e &\sim \N(0, \sigma_w).\\
 \end{align*}
 
 This differs from the previous hypergraph random walk model in that the edge weights are log-normal instead of
-exponentially distributed.  \xx{This might work better as a Laplacian distribution.  The same goes for song bias $b_j$.}
+exponentially distributed.  \xx{This might work better as a Laplacian distribution.  The same goes for song bias $b_j$.
+We'd lose differentiability though.}
 
 Note that all sums over edge membership indicators can be implemented as a dot product against the (sparse, constant) 
-song-edge incidence matrix $H \in \{0,1\}^{n, |\mathcal{E}|}$.
+song-edge incidence matrix $H \in \{0,1\}^{|\X|, |\mathcal{E}|}$.  If we overload notation, and let $U \in \R^{d\times m}$, $V \in \R^{d \times n}$, $b \in \R^{n}$ and $w \in
+\R^{|\mathcal{E}|}$, then the probabilities can be expressed compactly as follows.
+
+\begin{align*}
+\P\left[E \given \Theta=\theta\right] &\propto \exp\left\{w\right\}\\
+\P\left[E \given X_{t-1}, \Theta=\theta\right] &\propto \exp\left\{w\right\} \odot H_{t-1, \cdot}\\
+\P\left[X \given E=e, U=i, \Theta=\theta\right] &\propto \exp\left\{U_{\cdot,i}\trans V + b\right\} \odot H_{\cdot, e}.
+\end{align*}
 
 \subsection{Special cases}
 The model above generalizes several standard(ish) models directly:
@@ -77,9 +85,9 @@ The model above generalizes several standard(ish) models directly:
 \item Fixing $v_j, b_j$ to zero recovers the original hypergraph model, not counting the repetition constraint and
 change of prior.
 \item Fixing $v_j$ to zero enables item bias without personalization.
-\item Fixing $w_e = -\inf$ for $e \neq \text{uniform}$ recovers a standard stochastic recommender with a latent factor
-model.
+\item Restricting $\mathcal{E} = \{ \X \}$ (\ie, contain only the uniform edge) recovers a simple stochastic latent factor recommender.
 \end{itemize}
 
+Note that sampling is relatively efficient if the edge sets are small (on average) and $H$ is sparse.
 
 \end{document}
