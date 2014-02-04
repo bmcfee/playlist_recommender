@@ -1,7 +1,9 @@
 \documentclass{article}
 \usepackage{fullpage}
 \usepackage{brian}
+\usepackage{cancel}
 
+\newcommand{\ccancel}[2][black]{\color{#1}\cancel{#2}\normalcolor}
 \def\U{\ensuremath{\mathcal{U}}}
 
 \title{Personalized playlist modeling}
@@ -31,10 +33,10 @@ song.  Next, we incorporate a latent factor model to capture individual user pre
 
 \subsection{Model equations}
 
-Let $y_i = (x_0, x_1, \dots, x_T) \in Y$ denote a playlist, and let $i \in [m]$ index the corresponding user.
-The probability of generating $y_i$ given $u_i$ and the model parameters $\theta \defeq \{u, v, b, w\}$ is defined as follows:
+Let $y = (x_0, x_1, \dots, x_T) \in \Y$ denote a playlist, and let $i \in [m]$ index the corresponding user.
+The probability of generating $y$ given $u_i$ and the model parameters $\theta \defeq \{u, v, b, w\}$ is defined as follows:
 \begin{align*}
-\P\left[Y = y_i \given U = i, \Theta = \theta \right] &= \P\left[X = x_0 \given U = i, \Theta = \theta\right]
+\P\left[Y = y \given U = i, \Theta = \theta \right] &= \P\left[X = x_0 \given U = i, \Theta = \theta\right]
 \prod_{t=1}^{T} \P\left[X_t = x_t \given X_{t-1}=x_{t-1}, U=i, \Theta=\theta \right]
 \end{align*}
 
@@ -74,10 +76,16 @@ song-edge incidence matrix $H \in \{0,1\}^{|\X|, |\mathcal{E}|}$.  If we overloa
 \R^{|\mathcal{E}|}$, then the probabilities can be expressed compactly as follows.
 
 \begin{align*}
-\P\left[E \given \Theta=\theta\right] &\propto \exp\left\{w\right\}\\
-\P\left[E \given X_{t-1}, \Theta=\theta\right] &\propto \exp\left\{w\right\} \odot H_{t-1, \cdot}\\
-\P\left[X \given E=e, U=i, \Theta=\theta\right] &\propto \exp\left\{U_{\cdot,i}\trans V + b\right\} \odot H_{\cdot, e}.
+\P\left[E \given \Theta=\theta\right] &= \frac{\exp\left\{w\right\}}{\one\trans \exp\left\{w\right\}}\\
+\P\left[E \given X_{t-1}=x_{t-1}, \Theta=\theta\right] &= \frac{ H_{t-1, \cdot} \odot \exp\left\{w\right\} }{H_{t-1, \cdot}\trans \exp\left\{w\right\}}\\
+\P\left[X \given E=e, U=i, \Theta=\theta\right] &= \frac{ H_{\cdot, e} \odot \exp\left\{U_{\cdot,i}\trans V + b\right\} }{ H_{\cdot, e}\trans \exp\left\{U_{\cdot,i}\trans V + b\right\}}
 \end{align*}
+
+\begin{figure}
+\centering
+\includegraphics[width=0.7\textwidth]{model}
+\caption{Model structure}
+\end{figure}
 
 \subsection{Special cases}
 The model above generalizes several standard(ish) models directly:
@@ -89,5 +97,50 @@ change of prior.
 \end{itemize}
 
 Note that sampling is relatively efficient if the edge sets are small (on average) and $H$ is sparse.
+
+\section{Parameter estimation}
+Given a sample $\Y$, we seek the MAP parameters 
+\begin{align*}
+\overline{\Theta} \in \argmax_\Theta \P\left[\Theta\given \Y\right] &= \argmax_\Theta \P\left[\Y\given\Theta\right]\P\left[\Theta\right]\\
+&= \argmax_\Theta \log \P\left[\Y\given\Theta\right] + \log\P[\Theta]\\
+&= \argmax_\Theta \sum_{y\in\Y} \log \P\left[y\given\Theta\right] + \log\P[\Theta]
+\end{align*}
+
+The MAP objective is not jointly concave in all parameters $U, V, b, w$.  We will optimize parameters by block coordinate ascent.
+
+\subsection{$U$-step | $V, b, w$ fixed}
+The $U$ matrix can be decomposed into its columns, $U = [u_1, u_2, \cdots, u_m]$, where $u_i$ corresponds to the factor for the $i$th user.
+Since users are independent, the columns of $u$ can be optimized independently.  Note also that each $u_i$ depends only on the playlists for user $i$.
+
+Let $\Y_i$ denote the playlists of user $i$. The data term for the objective over $u_i$ looks as follows:
+\begin{align*}
+f(u) &\defeq \sum_{y \in \Y_i} \log\P\left[y\given u_i, V, b, w\right]\\
+&= \sum_{y \in \Y_i}\left( \log \P\left[x_0 \given u_i, V, b, w \right] + \sum_{t=1}^T \log \P\left[x_t \given x_{t-1}, u_i, V, b, w \right] \right)
+\end{align*}
+As noted in the previous section, the initial song likelihood is computed as:
+\begin{align*}
+\log\P\left[x_0 \given u_i, V, b, w\right] &= \log\sum_{e\in E} \P\left[e\given w\right]\P\left[x_0 \given e, u_i, V, b \right] \\
+&= \log\sum_{e\in E} \frac{\exp\{ w_e\}}{\sum_f \exp\{w_f\}} \frac{H_{0, e} \exp\{u_i\trans v_0 + b_0 \} }{H_{\cdot, e}\trans \exp\{u_i\trans V + b \} }\\
+&= \log\sum_{e\in E} \exp\{ w_e\} \frac{H_{0, e} \exp\{u_i\trans v_0 + b_0 \} }{H_{\cdot, e}\trans \exp\{u_i\trans V + b \} } - \ccancel[red]{\log\sum_f \exp\{w_f\}}\\
+&= \log \exp\{u_i\trans v_0 + b_0 \} \sum_{e \in E} \frac{\exp\{ w_e \} H_{0, e} }{H_{\cdot, e}\trans \exp\{u_i\trans V + b \} }\\
+&= u_i\trans v_0 + \ccancel[red]{b_0} + \log \sum_{e\in E}\frac{ H_{0, e}\exp\{w_e\}}{H_{\cdot, e}\trans \exp\{u_i\trans V + b \}}\\
+&= u_i\trans v_0 + \log \sum_{e\in E}\frac{ H_{0, e}\exp\{w_e\}}{H_{\cdot, e}\trans \exp\{u_i\trans V + b \}}
+\end{align*}
+The bigram transition likelihoods are similarly computed:
+\begin{align*}
+\log\P\left[x_t \given x_{t-1}, u_i, V, b, w\right] &= \log\sum_{e\in E} \P\left[e \given x_{t-1}, w \right]\left[x_t \given e, u_i, V, b \right]\\
+&= \log\sum_{e\in E} \frac{H_{t-1,e} \exp\{w_e\} }{H_{t-1,\cdot}\trans \exp\{w\}} \frac{H_{t,e} \exp\{u_i\trans v_t + b_t \} }{H_{\cdot,e}\trans \exp\{u_i\trans V + b \} }\\
+&= \log\sum_{e\in E} \frac{H_{t-1,e} \exp\{w_e\} H_{t,e} \exp\{u_i\trans v_t + b_t \} }{H_{\cdot,e}\trans \exp\{u_i\trans V + b \} } - \ccancel[red]{\log H_{t-1,\cdot}\trans
+\exp\{w\}}\\
+&= u_i\trans v_t + \ccancel[red]{b_t} + \log\sum_{e\in E} \frac{H_{t-1,e} H_{t, e} \exp\{w_e\} }{H_{\cdot,e}\trans \exp\{u_i\trans V + b \} }\\
+&= u_i\trans v_t + \log\sum_{e\in E} \frac{H_{t-1,e} H_{t, e} \exp\{w_e\} }{H_{\cdot,e}\trans \exp\{u_i\trans V + b \} }\\
+\end{align*}
+
+
+\subsection{$b$-step | $U, V, w$ fixed}
+
+\subsection{$V$-step | $U, b, w$ fixed}
+
+\subsection{$w$-step | $U, V, b$ fixed}
 
 \end{document}
