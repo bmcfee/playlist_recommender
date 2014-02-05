@@ -201,6 +201,7 @@ Recall that the data log-likehood can be lower-bounded by the sum over all users
 \[
 \Ell(\Y; \Theta) \gtrsim \sum_{i \in \U} \sum_{y \in \Y_i} \left(\sum_{t=0}^T u_i\trans v_t - \sum_{e \in \E} p_e^t \log \sum_{k\in e} \exp\{u_i\trans v_k + b_k\} \right)
 \]
+
 This leads to the lower-bounding objective 
 \begin{equation}
 f(v_j) \gtrsim \phi(v_j) \defeq \sum_{i \in \U} \sum_{y \in \Y_i} \left(\sum_{t=0}^T u_i\trans v_t \ind{t = j} - \sum_{e \in \E} H_{j,e} p_e^t \log \sum_{k\in e} \exp\{u_i\trans v_k + b_k\} \right)
@@ -213,6 +214,11 @@ The gradient of the penalized objective can be computed as
 \nabla_{v_j} &= -\frac{1}{\sigma_v^2} v_j + \sum_{i \in \U}u_i \left(\sum_{y \in \Y_i} \sum_{t=0}^T \ind{t=j} - \sum_{e \in \E} p_e^t \frac{H_{j,e} \exp\{u_i\trans v_j +
 b_j\}}{H_{\cdot,e}\trans \exp\{u_i\trans V + b\}}\right).
 \end{align}
+
+\subsubsection{Consensus optimization}
+Note that the lower bound is jointly concave in $V$. As such, we should be able to use ADMM to accelerate convergence over the columns by consensus optimization.  This would work by
+introducing auxiliary variables $\nu_j = v_j$ which appear everywhere except in the denominator of the normalization.  Then we can scatter-gather the column updates easily.
+
 
 \subsection{$b$-step | $U, V, w$ fixed}
 
