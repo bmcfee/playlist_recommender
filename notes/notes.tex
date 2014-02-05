@@ -166,12 +166,28 @@ Note that applying the same approximation to \cref{eq:ustep:initial} results in 
 as described above.  Combining terms, we achieve the lower-bound approximation:
 \begin{equation}
 f(u) \gtrsim \phi(u) = \sum_{y \in \Y_i} \left(\sum_{t=0}^T u_i\trans v_t - \sum_{e \in \E} \frac{H_{t-1,e} H_{t,e} \exp\{w_e\}}{ (H_{t-1,\cdot}\odot H_{t,\cdot})\trans \exp\{w\}} \log
-\sum_{k\in e} \exp\{u_i\trans v_k + b_k\} \right)
+\sum_{k\in e} \exp\{u_i\trans v_k + b_k\} \right)\label{eq:ustep:concave_obj}
 \end{equation}
 Finally, the gaussian prior on $u_i \sim \N(0, \sigma_u^2 I)$ results in a quadratic penalty of $g(u) = -\frac{1}{2\sigma^2}\|u_i\|^2$.
 
 The total surrogate objective, $\phi(u) + g(u)$ is differentiable and concave, and can be easily optimized by quasi-newton methods such as L-BFGS.
 Note that due to independence among users, all user vectors can be optimized in parallel.
+
+The optimization can be streamlined by pre-computing the edge weight distribution for each observed bigram.  Let 
+\[
+p_e^t \defeq \frac{H_{t-1,e}H_{t,e} \exp\{w_e\}}{(H_{t-1,\cdot}\odot H_{t,\cdot})\trans \exp\{w\}},
+\]
+with $H_{-1,\cdot} = \one\trans$.  Then the optimization can be written as 
+\[
+g(u_i) + \phi(u_i) = -\frac{1}{2\sigma_u^2} \|u_i\|^2 + \sum_{y \in \Y_i} \left(\sum_{t=0}^T u_i\trans v_t - \sum_{e \in \E} p_e^t \log \sum_{k\in e} \exp\{u_i\trans v_k + b_k\} \right)
+\]
+with gradient
+\begin{align*}
+\nabla_{u_i} &= -\frac{1}{\sigma_u^2} u_i + \sum_{y \in \Y_i} \left(\sum_{t=0}^T v_t - \sum_{e \in \E} p_e^t \sum_{k\in e} v_k \frac{\exp\{u_i\trans v_k + b_k\}}{\sum_{j \in e}
+\exp\{u_i \trans v_j + b_j\}} \right)\\
+&= -\frac{1}{\sigma_u^2} u_i + \sum_{y \in \Y_i} \left(\sum_{t=0}^T v_t - \sum_{e \in \E} p_e^t \sum_{k\in e} v_k \frac{\exp\{u_i\trans v_k + b_k\}}{H_{\cdot,e}\trans \exp\{u_i \trans
+V + b\}} \right).
+\end{align*}
 
 \subsection{$V$-step | $U, b, w$ fixed}
 
