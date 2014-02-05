@@ -217,8 +217,9 @@ b_j\}}{H_{\cdot,e}\trans \exp\{u_i\trans V + b\}}\right).
 
 \subsubsection{Consensus optimization}
 Note that the lower bound is jointly concave in $V$. As such, we should be able to use ADMM to accelerate convergence over the columns by consensus optimization.  This would work by
-introducing auxiliary variables $\nu_j = v_j$ which appear everywhere except in the denominator of the normalization.  Then we can scatter-gather the column updates easily.
+introducing auxiliary variables $\nu_j \approx v_j$ which appear everywhere except in the denominator of the normalization.  Then we can scatter-gather the column updates easily.
 
+\xx{TODO}
 
 \subsection{$b$-step | $U, V, w$ fixed}
 
