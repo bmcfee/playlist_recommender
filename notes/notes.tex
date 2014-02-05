@@ -20,6 +20,15 @@ Let $\U$ denote the set of $m$ users, $\X$ denote the set of $n$ songs, and $\Y$
 Let $\H$ denote an undirected hypergraph over $(\X, \E)$, where $\E \subseteq 2^\X$ is the
 collection of edges (attribute coincidence).
 
+We require the following conditions on $\H$:
+\begin{itemize}
+\item No edge is empty: $\forall e \in \E: |e| \geq 1$,
+\item Each vertex is contained: $\forall x \in \X, \exists e \in \E \suchthat x \in e$,
+\item Every pair of vertices are connected: $\forall x_1, x_2 \in \E, \exists e \in \E \suchthat \{x_1, x_2\} \subseteq e$.
+\end{itemize}
+
+The first condition is trivially satisfied by preprocessing.  The second and third conditions are both satisfied by including a uniform edge $\E \ni e_0 = \X$.
+
 \section{Personalized model}
 
 The hypergraph random walk model proceeds as follows:
@@ -128,13 +137,13 @@ As noted in the previous section, the initial song likelihood is computed as:
 &= \log\sum_{e\in \E} \frac{\exp\{ w_e\}}{\sum_{f} \exp\{w_f\}} \frac{H_{0, e} \exp\{u_i\trans v_0 + b_0 \} }{H_{\cdot, e}\trans \exp\{u_i\trans V + b \} }\notag\\
 &= \log \exp\{u_i\trans v_0 + b_0 \} \sum_{e \in \E} \frac{\exp\{ w_e \}}{\sum_f \exp\{w_f\}}\frac{ H_{0, e} }{H_{\cdot, e}\trans \exp\{u_i\trans V + b \} }\notag\\
 &= u_i\trans v_0 + \ccancel[red]{b_0} + \log \sum_{e\in \E}\frac{\exp\{w_e\}}{\sum_f \exp\{w_f\}}\frac{ H_{0, e}}{H_{\cdot, e}\trans \exp\{u_i\trans V + b \}}\notag\\
-&= u_i\trans v_0 + \log \sum_{e\in \E}\frac{\exp\{w_e\}}{\sum_f \exp\{w_f\}}\frac{ H_{0, e}}{H_{\cdot, e}\trans \exp\{u_i\trans V + b \}}\label{eq:ustep:initial}
+&= u_i\trans v_0 + \log \sum_{e\in \E}\frac{\exp\{w_e\}}{\ccancel[red]{\sum_f \exp\{w_f\}}}\frac{ H_{0, e}}{H_{\cdot, e}\trans \exp\{u_i\trans V + b \}}\notag\\%\label{eq:ustep:initial}
+&= u_i\trans v_0 + \log \sum_{e\in \E}\exp\{w_e\}\frac{ H_{0, e}}{H_{\cdot, e}\trans \exp\{u_i\trans V + b \}}\label{eq:ustep:initial}
 \end{align}
 The bigram transition likelihoods are similarly computed:
 \begin{align}
 \log\P\left[x_t \given x_{t-1}, u_i, V, b, w\right] &= \log\sum_{e\in \E} \P\left[e \given x_{t-1}, w \right]\P\left[x_t \given e, u_i, V, b \right]\notag\\
 &= \log\sum_{e\in \E} \frac{H_{t-1,e} \exp\{w_e\} }{H_{t-1,\cdot}\trans \exp\{w\}} \frac{H_{t,e} \exp\{u_i\trans v_t + b_t \} }{H_{\cdot,e}\trans \exp\{u_i\trans V + b \} }\notag\\
-&= \log\sum_{e\in \E} \frac{H_{t-1,e} \exp\{w_e\}}{H_{t-1, \cdot} \exp\{w\} } \frac{ H_{t,e} \exp\{u_i\trans v_t + b_t \} }{H_{\cdot,e}\trans \exp\{u_i\trans V + b \} }\notag\\
 &= u_i\trans v_t + \ccancel[red]{b_t} + \log\sum_{e\in \E} \frac{H_{t-1,e}\exp\{w_e\} }{H_{t-1,\cdot}\exp\{w\}}\frac{H_{t, e}}{H_{\cdot,e}\trans \exp\{u_i\trans V + b \} }\notag\\
 &= u_i\trans v_t + \log\sum_{e\in \E} \frac{H_{t-1,e} \exp\{w_e\}}{\ccancel[red]{H_{t-1,\cdot} \exp\{w\} }}\frac{ H_{t,e} }{H_{\cdot,e}\trans \exp\{u_i\trans V + b \} }\notag\\
 &= u_i\trans v_t + \log\sum_{e\in \E} \exp\{w_e\} \frac{H_{t-1,e} H_{t,e} }{H_{\cdot,e}\trans \exp\{u_i\trans V + b \} },\label{eq:ustep:bigram}
@@ -143,27 +152,20 @@ which generalizes the initial-state likelihood (with $t=0$) by including the bin
 (Note, if we hallucinate a song at $t=-1$ with $H_{-1,\cdot} = \one\trans$, then these definitions are equivalent.)
 
 \Cref{eq:ustep:obj} is a sum over terms of the form of \cref{eq:ustep:bigram}, which are not concave.  However, we can instead maximize a lower bound by applying Jensen's inequality to
-the summation:\footnote{For this approximation to be well-defined, we follow the convention $\log\nicefrac{0}{0} = 0$.}
-% \begin{align}
-% u_i\trans v_t + \log\sum_{e\in \E} \frac{H_{t-1,e} \exp\{w_e\}}{H_{t-1,\cdot} \exp\{w\} }\frac{ H_{t,e} }{H_{\cdot,e}\trans \exp\{u_i\trans V + b \} } &\geq
-% u_i\trans v_t + \sum_{e\in \E} \frac{H_{t-1,e} \exp\{w_e\}}{H_{t-1,\cdot} \exp\{w\} }\log\frac{ H_{t,e} }{H_{\cdot,e}\trans \exp\{u_i\trans V + b \} } \label{eq:ustep:concave}
-% \end{align}
+the summation.  To ease presentation, let ${\E_{t-1,t} = \{e \given e \in \E,\, \{x_{t-1}, x_{t}\} \subseteq e\}}$ denote the set of feasible edges containing the bigram $(x_{t-1}, x_t)$.
 \begin{align}
-u_i\trans v_t + \log\sum_{e\in \E} \exp\{w_e\} \frac{H_{t-1,e} H_{t, e} }{H_{\cdot,e}\trans \exp\{u_i\trans V + b \} } 
-&= u_i\trans v_t + \log \sum_{e\in \E}\frac{\exp\{w_e\}}{\sum_{f} \exp\{w_f\}} \frac{H_{t-1,e} H_{t, e} }{H_{\cdot,e}\trans \exp\{u_i\trans V + b \} } + \ccancel[red]{\log\sum_f
-\exp\{w_f\}}\notag\\
-&\geq u_i\trans v_t + \sum_{e\in \E} \frac{\exp\{w_e\} }{\sum_f \exp\{w_f\} }\log \frac{H_{t-1,e} H_{t, e} }{H_{\cdot,e}\trans \exp\{u_i\trans V + b \} } \notag\\
-&= u_i\trans v_t + \sum_{e\in \E} \frac{\exp\{w_e\}}{\sum_f \exp\{w_f\}} \left(\ccancel[red]{\log H_{t-1,e} H_{t, e} } - \log{H_{\cdot,e}\trans \exp\{u_i\trans V + b \} }
-\right)\notag\\
-&= u_i\trans v_t - \sum_{e\in \E} \frac{\exp\{w_e\}}{\sum_f \exp\{w_f\}} \log{H_{\cdot,e}\trans \exp\{u_i\trans V + b \} } \label{eq:ustep:concave}
+\log\sum_{e\in \E} \exp\{w_e\} \frac{H_{t-1,e} H_{t, e} }{H_{\cdot,e}\trans \exp\{u_i\trans V + b \} }
+&= \log\sum_{e \in \E_{t-1,t}} \exp\{w_e\} \frac{1}{H_{\cdot, e}\trans \exp\{u_i\trans V + b\} }\notag\\
+&= \log\sum_{e \in \E_{t-1,t}} \frac{\exp\{w_e\}}{\displaystyle\sum_{f\in\E_{t-1,t}} \exp\{w_f\}} \frac{1}{H_{\cdot, e}\trans \exp\{u_i\trans V + b\} } + \ccancel[red]{\log \sum_{f \in \E_{t-1,t}} \exp\{w_f\}}\notag\\
+&\geq -\sum_{e \in \E_{t-1,t}} \frac{\exp\{w_e\}}{\displaystyle\sum_{f\in\E_{t-1,t}} \exp\{w_f\}} \log H_{\cdot, e}\trans \exp\{u_i\trans V + b\}  \notag\\
+&= -\sum_{e \in \E_{t-1,t}} \frac{\exp\{w_e\}}{ (H_{t-1,\cdot} \odot H_{t,\cdot})\trans \exp\{w\}} \log H_{\cdot, e}\trans \exp\{u_i\trans V + b\}  \label{eq:ustep:concave}.
 \end{align}
-The second term in \cref{eq:ustep:concave} is a convex combination of negative log-sum-exp terms, and is therefore concave in $u_i$.  
-What is lost in this approximation is the dependence on bigram transitions.
+\Cref{eq:ustep:concave} is a convex combination of negative log-sum-exp terms, and is therefore concave in $u_i$.  
 
-Note that applying the same approximation to \cref{eq:ustep:initial} results in the same form as \cref{eq:ustep:concave}.
-Combining terms, we achieve the lower-bound approximation:
+Note that applying the same approximation to \cref{eq:ustep:initial} results in the same form as \cref{eq:ustep:concave}, assuming a phantom initial transition point from $t=-1$ 
+as described above.  Combining terms, we achieve the lower-bound approximation:
 \begin{equation}
-f(u) \gtrsim \phi(u) = \sum_{y \in \Y_i} \left(\sum_{t=0}^T u_i\trans v_t - \sum_{e \in \E} \frac{\exp\{w_e\}}{\sum_f \exp\{w_f\}} \log H_{\cdot, e}\trans \exp\{u_i\trans V + b\} \right)
+f(u) \gtrsim \phi(u) = \sum_{y \in \Y_i} \left(\sum_{t=0}^T u_i\trans v_t - \sum_{e \in \E_{t-1,t}} \frac{\exp\{w_e\}}{ (H_{t-1,\cdot}\odot H_{t,\cdot})\trans \exp\{w\}} \log H_{\cdot, e}\trans \exp\{u_i\trans V + b\} \right)
 \end{equation}
 Finally, the gaussian prior on $u_i \sim \N(0, \sigma_u^2 I)$ results in a quadratic penalty of $g(u) = -\frac{1}{2\sigma^2}\|u_i\|^2$.
 
