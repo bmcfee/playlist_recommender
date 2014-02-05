@@ -210,7 +210,7 @@ differentiable, and amenable to optimization via L-BFGS.
 
 The gradient of the penalized objective can be computed as 
 \begin{align}
-\nabla_{v_j} &= -\frac{1}{\sigma_v^2} v_j + \sum_{i \in \U}u_i \sum_{y \in \Y_i} \sum_{t=0}^T \left(\ind{t=j} - \sum_{e \in \E} H_{j,e} p_e^t \frac{\exp\{u_i\trans v_j +
+\nabla_{v_j} &= -\frac{1}{\sigma_v^2} v_j + \sum_{i \in \U}u_i \left(\sum_{y \in \Y_i} \sum_{t=0}^T \ind{t=j} - \sum_{e \in \E} p_e^t \frac{H_{j,e} \exp\{u_i\trans v_j +
 b_j\}}{H_{\cdot,e}\trans \exp\{u_i\trans V + b\}}\right).
 \end{align}
 
