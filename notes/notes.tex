@@ -127,7 +127,7 @@ Since users are independent, the columns of $u$ can be optimized independently. 
 Let $\Y_i$ denote the playlists of user $i$. The data term for the objective over $u_i$ looks as follows:\footnote{Throughout this document, canceled terms (slashed in red) are 
 constant with respect to the variable of optimization.}
 \begin{align}
-f(u) &\defeq \sum_{y \in \Y_i} \log\P\left[y\given u_i, V, b, w\right]\notag\\
+f(u_i) &\defeq \sum_{y \in \Y_i} \log\P\left[y\given u_i, V, b, w\right]\notag\\
 &= \sum_{y \in \Y_i}\left( \log \P\left[x_0 \given u_i, V, b, w \right] + \sum_{t=1}^T \log \P\left[x_t \given x_{t-1}, u_i, V, b, w \right] \right)\label{eq:ustep:obj}
 \end{align}
 As noted in the previous section, the initial song likelihood is computed as:
@@ -165,7 +165,7 @@ the summation.  To ease presentation, let ${\E_{t-1,t} = \{e \given e \in \E,\, 
 Note that applying the same approximation to \cref{eq:ustep:initial} results in the same form as \cref{eq:ustep:concave}, assuming a phantom initial transition point from $t=-1$ 
 as described above.  Combining terms, we achieve the lower-bound approximation:
 \begin{equation}
-f(u) \gtrsim \phi(u) = \sum_{y \in \Y_i} \left(\sum_{t=0}^T u_i\trans v_t - \sum_{e \in \E} \frac{H_{t-1,e} H_{t,e} \exp\{w_e\}}{ (H_{t-1,\cdot}\odot H_{t,\cdot})\trans \exp\{w\}} \log
+f(u_i) \gtrsim \phi(u_i) = \sum_{y \in \Y_i} \left(\sum_{t=0}^T u_i\trans v_t - \sum_{e \in \E} \frac{H_{t-1,e} H_{t,e} \exp\{w_e\}}{ (H_{t-1,\cdot}\odot H_{t,\cdot})\trans \exp\{w\}} \log
 \sum_{k\in e} \exp\{u_i\trans v_k + b_k\} \right)\label{eq:ustep:concave_obj}
 \end{equation}
 Finally, the gaussian prior on $u_i \sim \N(0, \sigma_u^2 I)$ results in a quadratic penalty of $g(u) = -\frac{1}{2\sigma^2}\|u_i\|^2$.
@@ -182,14 +182,37 @@ with $H_{-1,\cdot} = \one\trans$.  Then the optimization can be written as
 g(u_i) + \phi(u_i) = -\frac{1}{2\sigma_u^2} \|u_i\|^2 + \sum_{y \in \Y_i} \left(\sum_{t=0}^T u_i\trans v_t - \sum_{e \in \E} p_e^t \log \sum_{k\in e} \exp\{u_i\trans v_k + b_k\} \right)
 \]
 with gradient
-\begin{align*}
+\begin{align}
 \nabla_{u_i} &= -\frac{1}{\sigma_u^2} u_i + \sum_{y \in \Y_i} \left(\sum_{t=0}^T v_t - \sum_{e \in \E} p_e^t \sum_{k\in e} v_k \frac{\exp\{u_i\trans v_k + b_k\}}{\sum_{j \in e}
-\exp\{u_i \trans v_j + b_j\}} \right)\\
+\exp\{u_i \trans v_j + b_j\}} \right)\notag\\
 &= -\frac{1}{\sigma_u^2} u_i + \sum_{y \in \Y_i} \left(\sum_{t=0}^T v_t - \sum_{e \in \E} p_e^t \sum_{k\in e} v_k \frac{\exp\{u_i\trans v_k + b_k\}}{H_{\cdot,e}\trans \exp\{u_i \trans
-V + b\}} \right).
-\end{align*}
+V + b\}} \right).\label{eq:ustep:gradient}
+\end{align}
 
 \subsection{$V$-step | $U, b, w$ fixed}
+For the $V$-step, note that all approximations applied in the derivation of the $U$-step can be applied just as well, since they only affect the edge weight factors $w$ and bias terms
+$b$.
+
+Note that each song factor $v_i$ appears in all terms of the MAP objective, due to the normalization over song selection and requirement that each potential transition has nonzero 
+probability.  Consequently, there is no obvious independence structure here, nor implicit parallelism.  
+Instead, song factors will be optimized by cyclic block coordinate ascent on each $v_i$ with all $V_{\setminus i}$ held fixed.
+
+Recall that the data log-likehood can be lower-bounded by the sum over all users, playlists, and transitions:
+\[
+\Ell(\Y; \Theta) \gtrsim \sum_{i \in \U} \sum_{y \in \Y_i} \left(\sum_{t=0}^T u_i\trans v_t - \sum_{e \in \E} p_e^t \log \sum_{k\in e} \exp\{u_i\trans v_k + b_k\} \right)
+\]
+This leads to the lower-bounding objective 
+\begin{equation}
+f(v_j) \gtrsim \phi(v_j) \defeq \sum_{i \in \U} \sum_{y \in \Y_i} \left(\sum_{t=0}^T u_i\trans v_t \ind{t = j} - \sum_{e \in \E} H_{j,e} p_e^t \log \sum_{k\in e} \exp\{u_i\trans v_k + b_k\} \right)
+\end{equation}
+The term $u_i\trans v_t$ only counts if the user selects song $v_j$, and the normalization term only counts for edges which contain $v_j$.  Again, the approximation is concave and
+differentiable, and amenable to optimization via L-BFGS.
+
+The gradient of the penalized objective can be computed as 
+\begin{align}
+\nabla_{v_j} &= -\frac{1}{\sigma_v^2} v_j + \sum_{i \in \U}u_i \sum_{y \in \Y_i} \sum_{t=0}^T \left(\ind{t=j} - \sum_{e \in \E} H_{j,e} p_e^t \frac{\exp\{u_i\trans v_j +
+b_j\}}{H_{\cdot,e}\trans \exp\{u_i\trans V + b\}}\right).
+\end{align}
 
 \subsection{$b$-step | $U, V, w$ fixed}
 
