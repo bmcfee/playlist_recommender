@@ -5,6 +5,7 @@
 \usepackage{cancel}
 
 \newcommand{\ccancel}[2][black]{\color{#1}\cancel{#2}\normalcolor}
+\def\e{\ensuremath{\mathsf{e}}}
 \def\E{\ensuremath{\mathcal{E}}}
 \def\U{\ensuremath{\mathcal{U}}}
 
@@ -28,6 +29,8 @@ We require the following conditions on $\H$:
 \end{itemize}
 
 The first condition is trivially satisfied by preprocessing.  The second and third conditions are both satisfied by including a uniform edge $\E \ni e_0 = \X$.
+
+Finally, let $\e_i$ denote the $i$th standard basis vector.
 
 \section{Personalized model}
 
@@ -134,19 +137,18 @@ As noted in the previous section, the initial song likelihood is computed as:
 \begin{align}
 \log\P\left[x_0 \given u_i, V, b, w\right] &= \log\sum_{e\in \E} \P\left[e\given w\right]\P\left[x_0 \given e, u_i, V, b \right] \notag\\
 &= \log\sum_{e\in \E} \frac{\exp\{ w_e\}}{\sum_f \exp\{w_f\}} \frac{H_{0, e} \exp\{u_i\trans v_0 + b_0 \} }{H_{\cdot, e}\trans \exp\{u_i\trans V + b \} }\notag\\
-&= \log\sum_{e\in \E} \frac{\exp\{ w_e\}}{\sum_{f} \exp\{w_f\}} \frac{H_{0, e} \exp\{u_i\trans v_0 + b_0 \} }{H_{\cdot, e}\trans \exp\{u_i\trans V + b \} }\notag\\
 &= \log \exp\{u_i\trans v_0 + b_0 \} \sum_{e \in \E} \frac{\exp\{ w_e \}}{\sum_f \exp\{w_f\}}\frac{ H_{0, e} }{H_{\cdot, e}\trans \exp\{u_i\trans V + b \} }\notag\\
 &= u_i\trans v_0 + \ccancel[red]{b_0} + \log \sum_{e\in \E}\frac{\exp\{w_e\}}{\sum_f \exp\{w_f\}}\frac{ H_{0, e}}{H_{\cdot, e}\trans \exp\{u_i\trans V + b \}}\notag\\
-&= u_i\trans v_0 + \log \sum_{e\in \E}\frac{\exp\{w_e\}}{\ccancel[red]{\sum_f \exp\{w_f\}}}\frac{ H_{0, e}}{H_{\cdot, e}\trans \exp\{u_i\trans V + b \}}\notag\\%\label{eq:ustep:initial}
-&= u_i\trans v_0 + \log \sum_{e\in \E}\exp\{w_e\}\frac{ H_{0, e}}{H_{\cdot, e}\trans \exp\{u_i\trans V + b \}}\label{eq:ustep:initial}
+&\approx u_i\trans v_0 + \log \sum_{e\in \E}\frac{\exp\{w_e\}}{\ccancel[red]{\sum_f \exp\{w_f\}}}\frac{ H_{0, e}}{H_{\cdot, e}\trans \exp\{u_i\trans V + b \}}\notag\\%\label{eq:ustep:initial}
+&\approx u_i\trans v_0 + \log \sum_{e\in \E}\exp\{w_e\}\frac{ H_{0, e}}{H_{\cdot, e}\trans \exp\{u_i\trans V + b \}}\label{eq:ustep:initial}
 \end{align}
 The bigram transition likelihoods are similarly computed:
 \begin{align}
 \log\P\left[x_t \given x_{t-1}, u_i, V, b, w\right] &= \log\sum_{e\in \E} \P\left[e \given x_{t-1}, w \right]\P\left[x_t \given e, u_i, V, b \right]\notag\\
 &= \log\sum_{e\in \E} \frac{H_{t-1,e} \exp\{w_e\} }{H_{t-1,\cdot}\trans \exp\{w\}} \frac{H_{t,e} \exp\{u_i\trans v_t + b_t \} }{H_{\cdot,e}\trans \exp\{u_i\trans V + b \} }\notag\\
 &= u_i\trans v_t + \ccancel[red]{b_t} + \log\sum_{e\in \E} \frac{H_{t-1,e}\exp\{w_e\} }{H_{t-1,\cdot}\exp\{w\}}\frac{H_{t, e}}{H_{\cdot,e}\trans \exp\{u_i\trans V + b \} }\notag\\
-&= u_i\trans v_t + \log\sum_{e\in \E} \frac{H_{t-1,e} \exp\{w_e\}}{\ccancel[red]{H_{t-1,\cdot} \exp\{w\} }}\frac{ H_{t,e} }{H_{\cdot,e}\trans \exp\{u_i\trans V + b \} }\notag\\
-&= u_i\trans v_t + \log\sum_{e\in \E} \exp\{w_e\} \frac{H_{t-1,e} H_{t,e} }{H_{\cdot,e}\trans \exp\{u_i\trans V + b \} },\label{eq:ustep:bigram}
+&\approx u_i\trans v_t + \log\sum_{e\in \E} \frac{H_{t-1,e} \exp\{w_e\}}{\ccancel[red]{H_{t-1,\cdot} \exp\{w\} }}\frac{ H_{t,e} }{H_{\cdot,e}\trans \exp\{u_i\trans V + b \} }\notag\\
+&\approx u_i\trans v_t + \log\sum_{e\in \E} \exp\{w_e\} \frac{H_{t-1,e} H_{t,e} }{H_{\cdot,e}\trans \exp\{u_i\trans V + b \} },\label{eq:ustep:bigram}
 \end{align}
 which generalizes the initial-state likelihood (with $t=0$) by including the binary transition factor $H_{t-1,e}$.  
 (Note, if we hallucinate a song at $t=-1$ with $H_{-1,\cdot} = \one\trans$, then these definitions are equivalent.)
@@ -157,7 +159,7 @@ the summation.  To ease presentation, let ${\E_{t-1,t} = \{e \given e \in \E,\, 
 \log\sum_{e\in \E} \exp\{w_e\} \frac{H_{t-1,e} H_{t, e} }{H_{\cdot,e}\trans \exp\{u_i\trans V + b \} }
 &= \log\sum_{e \in \E_{t-1,t}} \exp\{w_e\} \frac{1}{H_{\cdot, e}\trans \exp\{u_i\trans V + b\} }\notag\\
 &= \log\sum_{e \in \E_{t-1,t}} \frac{\exp\{w_e\}}{\displaystyle\sum_{f\in\E_{t-1,t}} \exp\{w_f\}} \frac{1}{H_{\cdot, e}\trans \exp\{u_i\trans V + b\} } + \ccancel[red]{\log \sum_{f \in \E_{t-1,t}} \exp\{w_f\}}\notag\\
-&\geq -\sum_{e \in \E_{t-1,t}} \frac{\exp\{w_e\}}{\displaystyle\sum_{f\in\E_{t-1,t}} \exp\{w_f\}} \log H_{\cdot, e}\trans \exp\{u_i\trans V + b\}  \notag\\
+&\gtrsim -\sum_{e \in \E_{t-1,t}} \frac{\exp\{w_e\}}{\displaystyle\sum_{f\in\E_{t-1,t}} \exp\{w_f\}} \log H_{\cdot, e}\trans \exp\{u_i\trans V + b\}  \notag\\
 &= -\sum_{e\in\E} \frac{H_{t-1,e} H_{t,e} \exp\{w_e\}}{ (H_{t-1,\cdot} \odot H_{t,\cdot})\trans \exp\{w\}} \log H_{\cdot, e}\trans \exp\{u_i\trans V + b\}  \label{eq:ustep:concave}.
 \end{align}
 \Cref{eq:ustep:concave} is a convex combination of negative log-sum-exp terms, and is therefore concave in $u_i$.  
@@ -204,14 +206,14 @@ Recall that the data log-likehood can be lower-bounded by the sum over all users
 
 This leads to the lower-bounding objective 
 \begin{equation}
-f(v_j) \gtrsim \phi(v_j) \defeq \sum_{i \in \U} \sum_{y \in \Y_i} \left(\sum_{t=0}^T u_i\trans v_t \ind{t = j} - \sum_{e \in \E} H_{j,e} p_e^t \log \sum_{k\in e} \exp\{u_i\trans v_k + b_k\} \right)
+f(v_j) \gtrsim \phi(v_j) \defeq \sum_{i \in \U} \sum_{y \in \Y_i} \left(\sum_{t=0}^T u_i\trans v_t \ind{x_t = x_j} - \sum_{e \in \E} H_{j,e} p_e^t \log \sum_{k\in e} \exp\{u_i\trans v_k + b_k\} \right)
 \end{equation}
 The term $u_i\trans v_t$ only counts if the user selects song $v_j$, and the normalization term only counts for edges which contain $v_j$.  Again, the approximation is concave and
 differentiable, and amenable to optimization via L-BFGS.
 
 The gradient of the penalized objective can be computed as 
 \begin{align}
-\nabla_{v_j} &= -\frac{1}{\sigma_v^2} v_j + \sum_{i \in \U}u_i \left(\sum_{y \in \Y_i} \sum_{t=0}^T \ind{t=j} - \sum_{e \in \E} p_e^t \frac{H_{j,e} \exp\{u_i\trans v_j +
+\nabla_{v_j} &= -\frac{1}{\sigma_v^2} v_j + \sum_{i \in \U}u_i \left(\sum_{y \in \Y_i} \sum_{t=0}^T \ind{x_t=x_j} - \sum_{e \in \E} p_e^t \frac{H_{j,e} \exp\{u_i\trans v_j +
 b_j\}}{H_{\cdot,e}\trans \exp\{u_i\trans V + b\}}\right).
 \end{align}
 
@@ -222,7 +224,27 @@ introducing auxiliary variables $\nu_j \approx v_j$ which appear everywhere exce
 \xx{TODO}
 
 \subsection{$b$-step | $U, V, w$ fixed}
-
+For the $b$-step, we follow the same general approach as the $U$-step, although the initial approximation differs.
+\begin{align}
+\log\P\left[x_t \given x_{t-1}, u_i, V, b, w\right] 
+&= \log\sum_{e\in \E} \frac{H_{t-1,e} \exp\{w_e\} }{H_{t-1,\cdot}\trans \exp\{w\}} \frac{H_{t,e} \exp\{u_i\trans v_t + b_t \} }{H_{\cdot,e}\trans \exp\{u_i\trans V + b \} }\notag\\
+&= \ccancel[red]{u_i\trans v_t} + b_t + \log\sum_{e\in \E} \frac{H_{t-1,e}\exp\{w_e\} }{H_{t-1,\cdot}\exp\{w\}}\frac{H_{t, e}}{H_{\cdot,e}\trans \exp\{u_i\trans V + b \} }\notag\\
+&\approx b\trans \e_t + \log\sum_{e\in \E} \frac{H_{t-1,e} \exp\{w_e\}}{\ccancel[red]{H_{t-1,\cdot} \exp\{w\} }}\frac{ H_{t,e} }{H_{\cdot,e}\trans \exp\{u_i\trans V + b \} }\notag\\
+&\approx b\trans \e_t + \log\sum_{e\in \E} \exp\{w_e\} \frac{ H_{t-1,e} H_{t,e} }{H_{\cdot,e}\trans \exp\{u_i\trans V + b \} }\notag\\
+\end{align}
+Now, applying the same lower bounding technique, we get 
+\begin{align}
+\log\sum_{e\in \E} \exp\{w_e\} \frac{ H_{t-1,e} H_{t,e} }{H_{\cdot,e}\trans \exp\{u_i\trans V + b \} }
+&=
+\log\sum_{e\in \E_{t-1,t}} \frac{\exp\{w_e\}}{\displaystyle\sum_{f\in \E_{t-1,t}}\exp\{w_f\}} \frac{ 1 }{H_{\cdot,e}\trans \exp\{u_i\trans V + b \} } + \ccancel[red]{\log\sum_{f\in\E_{t-1,t}}
+\exp\{w_f\}}\notag\\
+&\gtrsim \sum_{e\in\E} p_e^t \log \sum_{k\in e} \exp\{u_i\trans v_k + b_k\}\label{eq:bstep:concave}.
+\end{align}
+This results in the surrogate objective function
+\begin{equation}
+\phi(b) \defeq \sum_{i\in\U}\sum_{y\in\Y_i}\sum_{t=0}^T b\trans \e_t - \sum_{e\in\E} p_e^t \log H_{\cdot, e}\trans \exp\{u_i\trans V + b\}.\label{eq:bstep:surrogate}
+\end{equation}
+This function, again, is concave in $b$.  The gradient is computed as
 \subsection{$w$-step | $U, V, b$ fixed}
 
 \end{document}
