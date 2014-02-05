@@ -238,13 +238,24 @@ Now, applying the same lower bounding technique, we get
 &=
 \log\sum_{e\in \E_{t-1,t}} \frac{\exp\{w_e\}}{\displaystyle\sum_{f\in \E_{t-1,t}}\exp\{w_f\}} \frac{ 1 }{H_{\cdot,e}\trans \exp\{u_i\trans V + b \} } + \ccancel[red]{\log\sum_{f\in\E_{t-1,t}}
 \exp\{w_f\}}\notag\\
-&\gtrsim \sum_{e\in\E} p_e^t \log \sum_{k\in e} \exp\{u_i\trans v_k + b_k\}\label{eq:bstep:concave}.
+&\gtrsim \sum_{e\in\E} p_e^t \log \sum_{k\in e} \exp\{u_i\trans v_k + b\trans \e_k\}\label{eq:bstep:concave}.
 \end{align}
 This results in the surrogate objective function
 \begin{equation}
-\phi(b) \defeq \sum_{i\in\U}\sum_{y\in\Y_i}\sum_{t=0}^T b\trans \e_t - \sum_{e\in\E} p_e^t \log H_{\cdot, e}\trans \exp\{u_i\trans V + b\}.\label{eq:bstep:surrogate}
+\phi(b) \defeq \sum_{i\in\U}\sum_{y\in\Y_i}\sum_{t=0}^T b\trans \e_t - \sum_{e\in\E} p_e^t \log \sum_{k\in e} \exp\{u_i\trans v_k + b\trans \e_k\}.\label{eq:bstep:surrogate}
 \end{equation}
 This function, again, is concave in $b$.  The gradient is computed as
+\begin{align}
+\nabla_b &= \sum_{i\in\U}\sum_{y\in\Y_i}\sum_{t=0}^T \left( \e_t - \sum_{e\in\E} p_e^t \sum_{k\in e} \e_k \frac{\exp\{u_i\trans v_k + b\trans \e_k\}}{\sum_{j\in e} \exp\{u_i\trans
+v_j + b\trans \e_j\}}  \right)\notag\\
+&= \sum_{i\in\U}\sum_{y\in\Y_i}\sum_{t=0}^T \left( \e_t - \sum_{e\in\E} p_e^t \frac{H_{\cdot, e} \odot \exp\{u_i\trans V + b \}}{ H_{\cdot,e}\trans \exp\{u_i\trans V + b\}}  \right)
+\label{eq:bstep:gradient}.
+\end{align}
+
+
+
+
+
 \subsection{$w$-step | $U, V, b$ fixed}
 
 \end{document}
