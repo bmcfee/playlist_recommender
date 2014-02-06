@@ -207,16 +207,26 @@ Recall that the data log-likehood can be lower-bounded by the sum over all users
 \]
 
 This leads to the lower-bounding objective 
-\begin{equation}
-f(v_j) \gtrsim \phi(v_j) \defeq \sum_{i \in \U} \sum_{y \in \Y_i} \left(\sum_{t=0}^T u_i\trans v_t \ind{x_t = x_j} - \sum_{e \in \E} H_{j,e} p_e^t \log \sum_{k\in e} \exp\{u_i\trans v_k + b_k\} \right)
-\end{equation}
+\begin{align*}
+f(V) \gtrsim \phi(V) &\defeq \sum_{i \in \U} \sum_{y \in \Y_i} \left(\sum_{t=0}^T u_i\trans V \e_t - \sum_{e \in \E} p_e^t \log \sum_{k\in \X} H_{k,e} \exp\{u_i\trans V \e_k + b_k\}
+\right)\\
+&= \sum_{i \in \U} \sum_{y \in \Y_i} \left(\sum_{t=0}^T \trace\left(\e_t u_i\trans V\right)- \sum_{e \in \E} p_e^t \log \sum_{k\in \X} H_{k,e} \exp\left\{\trace\left(\e_k u_i\trans
+V\right) + b_k\right\} \right)
+\end{align*}
 The term $u_i\trans v_t$ only counts if the user selects song $v_j$, and the normalization term only counts for edges which contain $v_j$.  Again, the approximation is concave and
 differentiable, and amenable to optimization via L-BFGS.
 
 The gradient of the penalized objective can be computed as 
+% \begin{align}
+% \nabla_{v_j} &= -\frac{1}{\sigma_v^2} v_j + \sum_{i \in \U}u_i \left(\sum_{y \in \Y_i} \sum_{t=0}^T \ind{x_t=x_j} - \sum_{e \in \E} p_e^t \frac{H_{j,e} \exp\{u_i\trans v_j +
+% b_j\}}{\sum_{k\in\X} H_{k,e} \exp\{u_i\trans v_k + b_k\}}\right).
+% \end{align}
+
 \begin{align}
-\nabla_{v_j} &= -\frac{1}{\sigma_v^2} v_j + \sum_{i \in \U}u_i \left(\sum_{y \in \Y_i} \sum_{t=0}^T \ind{x_t=x_j} - \sum_{e \in \E} p_e^t \frac{H_{j,e} \exp\{u_i\trans v_j +
-b_j\}}{\sum_{k\in\X} H_{k,e} \exp\{u_i\trans v_k + b_k\}}\right).
+\nabla_{V} &= -\frac{1}{\sigma_v^2} V + \sum_{i \in \U} u_i \left(\sum_{y \in \Y_i} \sum_{t=0}^T \e_t\trans
+- \sum_{e \in \E} p_e^t \sum_{j \in \X} \e_j\trans \cdot \frac{H_{j,e} \exp\left\{\trace\left( \e_j u_i\trans V\right) + b_j\right\}}{\sum_{k\in\X} H_{k,e}
+  \exp\left\{\trace\left(\e_k u_i\trans V\right) + b_k\right\}}
+\right).
 \end{align}
 
 \subsubsection{Consensus optimization}
