@@ -30,7 +30,9 @@ We require the following conditions on $\H$:
 
 The first condition is trivially satisfied by preprocessing.  The second and third conditions are both satisfied by including a uniform edge $\E \ni e_0 = \X$.
 
-Finally, let $\e_i$ denote the $i$th standard basis vector.
+$\e_i$ will denote the $i$th standard basis vector.
+
+$\gtrsim$ and $\eqsim$ will denote (in)equality modulo an additive constant.
 
 \section{Personalized model}
 
@@ -68,7 +70,7 @@ The probability of drawing a song from a given subset is characterized as
 The bigram transition probability is defined by marginalizing over the edge set $\E$, as follows:
 \begin{align*}
 \P\left[X_{t}= x_t \given X_{t-1}=x_{t-1}, U=i, \Theta=\theta \right] &\defeq \sum_{e \in \E} 
-\P\left[X_{t}=x_t \given E=e, U=i, \Theta=\theta\right]\\
+\P\left[X_{t}=x_t \given E=e, U=i, \Theta=\theta\right]\cdot\\
 &\phantom{\defeq \sum}\quad\P\left[E=e \given X_{t-1} = x_{t-1}, \Theta=\theta\right]\\
 \P\left[E=e \given X_{t-1}=x_{t-1}, \Theta=\theta\right] &\defeq \frac{\phantom\sum\ind{x_{t-1}\in e}\exp\{w_e\}}{ \displaystyle\sum_{f \in \E} \ind{x_{t-1} \in f} \exp\{w_f\} }
 \end{align*}
@@ -139,16 +141,16 @@ As noted in the previous section, the initial song likelihood is computed as:
 &= \log\sum_{e\in \E} \frac{\exp\{ w_e\}}{\sum_f \exp\{w_f\}} \frac{H_{0, e} \exp\{u_i\trans v_0 + b_0 \} }{H_{\cdot, e}\trans \exp\{u_i\trans V + b \} }\notag\\
 &= \log \exp\{u_i\trans v_0 + b_0 \} \sum_{e \in \E} \frac{\exp\{ w_e \}}{\sum_f \exp\{w_f\}}\frac{ H_{0, e} }{H_{\cdot, e}\trans \exp\{u_i\trans V + b \} }\notag\\
 &= u_i\trans v_0 + \ccancel[red]{b_0} + \log \sum_{e\in \E}\frac{\exp\{w_e\}}{\sum_f \exp\{w_f\}}\frac{ H_{0, e}}{H_{\cdot, e}\trans \exp\{u_i\trans V + b \}}\notag\\
-&\approx u_i\trans v_0 + \log \sum_{e\in \E}\frac{\exp\{w_e\}}{\ccancel[red]{\sum_f \exp\{w_f\}}}\frac{ H_{0, e}}{H_{\cdot, e}\trans \exp\{u_i\trans V + b \}}\notag\\%\label{eq:ustep:initial}
-&\approx u_i\trans v_0 + \log \sum_{e\in \E}\exp\{w_e\}\frac{ H_{0, e}}{H_{\cdot, e}\trans \exp\{u_i\trans V + b \}}\label{eq:ustep:initial}
+&\eqsim u_i\trans v_0 + \log \sum_{e\in \E}\frac{\exp\{w_e\}}{\ccancel[red]{\sum_f \exp\{w_f\}}}\frac{ H_{0, e}}{H_{\cdot, e}\trans \exp\{u_i\trans V + b \}}\notag\\%\label{eq:ustep:initial}
+&\eqsim u_i\trans v_0 + \log \sum_{e\in \E}\exp\{w_e\}\frac{ H_{0, e}}{H_{\cdot, e}\trans \exp\{u_i\trans V + b \}}\label{eq:ustep:initial}
 \end{align}
 The bigram transition likelihoods are similarly computed:
 \begin{align}
 \log\P\left[x_t \given x_{t-1}, u_i, V, b, w\right] &= \log\sum_{e\in \E} \P\left[e \given x_{t-1}, w \right]\P\left[x_t \given e, u_i, V, b \right]\notag\\
 &= \log\sum_{e\in \E} \frac{H_{t-1,e} \exp\{w_e\} }{H_{t-1,\cdot}\trans \exp\{w\}} \frac{H_{t,e} \exp\{u_i\trans v_t + b_t \} }{H_{\cdot,e}\trans \exp\{u_i\trans V + b \} }\notag\\
 &= u_i\trans v_t + \ccancel[red]{b_t} + \log\sum_{e\in \E} \frac{H_{t-1,e}\exp\{w_e\} }{H_{t-1,\cdot}\exp\{w\}}\frac{H_{t, e}}{H_{\cdot,e}\trans \exp\{u_i\trans V + b \} }\notag\\
-&\approx u_i\trans v_t + \log\sum_{e\in \E} \frac{H_{t-1,e} \exp\{w_e\}}{\ccancel[red]{H_{t-1,\cdot} \exp\{w\} }}\frac{ H_{t,e} }{H_{\cdot,e}\trans \exp\{u_i\trans V + b \} }\notag\\
-&\approx u_i\trans v_t + \log\sum_{e\in \E} \exp\{w_e\} \frac{H_{t-1,e} H_{t,e} }{H_{\cdot,e}\trans \exp\{u_i\trans V + b \} },\label{eq:ustep:bigram}
+&\eqsim u_i\trans v_t + \log\sum_{e\in \E} \frac{H_{t-1,e} \exp\{w_e\}}{\ccancel[red]{H_{t-1,\cdot} \exp\{w\} }}\frac{ H_{t,e} }{H_{\cdot,e}\trans \exp\{u_i\trans V + b \} }\notag\\
+&\eqsim u_i\trans v_t + \log\sum_{e\in \E} \exp\{w_e\} \frac{H_{t-1,e} H_{t,e} }{H_{\cdot,e}\trans \exp\{u_i\trans V + b \} },\label{eq:ustep:bigram}
 \end{align}
 which generalizes the initial-state likelihood (with $t=0$) by including the binary transition factor $H_{t-1,e}$.  
 (Note, if we hallucinate a song at $t=-1$ with $H_{-1,\cdot} = \one\trans$, then these definitions are equivalent.)
@@ -219,7 +221,7 @@ b_j\}}{H_{\cdot,e}\trans \exp\{u_i\trans V + b\}}\right).
 
 \subsubsection{Consensus optimization}
 Note that the lower bound is jointly concave in $V$. As such, we should be able to use ADMM to accelerate convergence over the columns by consensus optimization.  This would work by
-introducing auxiliary variables $\nu_j \approx v_j$ which appear everywhere except in the denominator of the normalization.  Then we can scatter-gather the column updates easily.
+introducing auxiliary variables $\nu_j \eqsim v_j$ which appear everywhere except in the denominator of the normalization.  Then we can scatter-gather the column updates easily.
 
 \xx{TODO}
 
@@ -229,8 +231,8 @@ For the $b$-step, we follow the same general approach as the $U$-step, although 
 \log\P\left[x_t \given x_{t-1}, u_i, V, b, w\right] 
 &= \log\sum_{e\in \E} \frac{H_{t-1,e} \exp\{w_e\} }{H_{t-1,\cdot}\trans \exp\{w\}} \frac{H_{t,e} \exp\{u_i\trans v_t + b_t \} }{H_{\cdot,e}\trans \exp\{u_i\trans V + b \} }\notag\\
 &= \ccancel[red]{u_i\trans v_t} + b_t + \log\sum_{e\in \E} \frac{H_{t-1,e}\exp\{w_e\} }{H_{t-1,\cdot}\exp\{w\}}\frac{H_{t, e}}{H_{\cdot,e}\trans \exp\{u_i\trans V + b \} }\notag\\
-&\approx b\trans \e_t + \log\sum_{e\in \E} \frac{H_{t-1,e} \exp\{w_e\}}{\ccancel[red]{H_{t-1,\cdot} \exp\{w\} }}\frac{ H_{t,e} }{H_{\cdot,e}\trans \exp\{u_i\trans V + b \} }\notag\\
-&\approx b\trans \e_t + \log\sum_{e\in \E} \exp\{w_e\} \frac{ H_{t-1,e} H_{t,e} }{H_{\cdot,e}\trans \exp\{u_i\trans V + b \} }\notag\\
+&\eqsim b\trans \e_t + \log\sum_{e\in \E} \frac{H_{t-1,e} \exp\{w_e\}}{\ccancel[red]{H_{t-1,\cdot} \exp\{w\} }}\frac{ H_{t,e} }{H_{\cdot,e}\trans \exp\{u_i\trans V + b \} }\notag\\
+&\eqsim b\trans \e_t + \log\sum_{e\in \E} \exp\{w_e\} \frac{ H_{t-1,e} H_{t,e} }{H_{\cdot,e}\trans \exp\{u_i\trans V + b \} }\notag\\
 \end{align}
 Now, applying the same lower bounding technique, we get 
 \begin{align}
@@ -252,10 +254,56 @@ v_j + b\trans \e_j\}}  \right)\notag\\
 \label{eq:bstep:gradient}.
 \end{align}
 
-
-
-
-
 \subsection{$w$-step | $U, V, b$ fixed}
+Holding $U, V, b$ constant and updating $w$, the bigram likelihood looks as follows:
+\begin{align}
+\log\P\left[x_t \given x_{t-1}, u_i, V, b, w\right] &= \log\sum_{e\in \E} \P\left[e \given x_{t-1}, w \right]\P\left[x_t \given e, u_i, V, b \right]\notag\\
+&= \log\sum_{e\in \E} \frac{H_{t-1,e} \exp\{w_e\} }{H_{t-1,\cdot}\trans \exp\{w\}} \frac{H_{t,e} \exp\{u_i\trans v_t + b_t \} }{H_{\cdot,e}\trans \exp\{u_i\trans V + b \} }\notag\\
+&= \log\sum_{e\in \E} \frac{H_{t-1,e} \exp\{w_e\} }{H_{t-1,\cdot}\trans \exp\{w\}} \frac{H_{t,e} \ccancel[red]{\exp\{u_i\trans v_t + b_t \}} }{H_{\cdot,e}\trans \exp\{u_i\trans V + b \} }\notag\\
+&\eqsim \log\sum_{e\in \E_{t-1,t}} \exp\{w_e\} \frac{1}{H_{\cdot,e}\trans \exp\{u_i\trans V + b \} } - \log H_{t-1,\cdot}\trans \exp\{w\} \label{eq:wstep:obj}
+\end{align}
+
+The second term in \cref{eq:wstep:obj} is a negative log-sum-exp, and is therefore concave in $w$.  However, the first term is convex.  In principal, this can be solved by DC
+programming, or by direct optimization as in the previous work.  Here, we derive a concave lower bound using the same techniques as before.
+
+Let $q_e \defeq {(H_{\cdot, e}\trans \exp\{u_i\trans V + b\})}^{-1}$.  Then
+\begin{align}
+\log\sum_{e \in \E_{t-1,t}} \frac{1}{H_{\cdot, e}\trans \exp\{u_i \trans V + b\} } \exp\{w_e\} &= \log\sum_{e \in \E_{t-1,t}} q_e \exp\{w_e\} \notag\\
+&= \log\sum_{e \in \E_{t-1,t}} \frac{q_e}{\sum_{f \in \E_{t-1,t}} q_f} \exp\{w_e\} + \ccancel[red]{\log\sum_{f\in\E_{t-1,t}} q_f} \notag\\
+&\gtrsim \sum_{e\in \E_{t-1,t}} \frac{q_e}{\sum_{f\in\E_{t-1,t}} q_f} \log\exp\{w_e\}\notag\\
+&= \sum_{e\in \E_{t-1,t}} \frac{q_e }{\sum_{f\in\E_{t-1,t}} q_f}w_e \notag\\
+&= \sum_{e\in\E} \frac{H_{t-1,e}H_{t,e} q_e}{ (H_{t-1,\cdot} \odot H_{t, \cdot})\trans q} w_e\label{eq:wstep:concave}
+\end{align}
+
+So the final surrogate objective is
+\begin{equation}
+\phi(w) \defeq \sum_{i\in\U}\sum_{y\in\Y_i}\sum_{t=0}^T \left(\sum_{e} \frac{H_{t-1,e} H_{t,e} q_e }{ (H_{t-1,\cdot} \odot H_{t, \cdot})\trans q }w\trans \e_e - \log
+H_{t-1,\cdot}\trans \exp\{w\}\right), \label{eq:wstep:surrogate}
+\end{equation}
+which is concave in $w$.
+
+\section{Model restrictions}
+
+Here, we spell out the surrogate objectives for various special cases of the model.
+
+\subsection{No personalization}
+
+Fix $u_i = 0$ for all users.  Then the latent factor terms $V$ all disappear from the model as well.
+The result is a popularity-adaptive version of the hypergraph model.
+
+\begin{align}
+\phi(b) &\defeq \sum_{i\in\U}\sum_{y\in\Y_i}\sum_{t=0}^T b\trans \e_t - \sum_{e\in\E} p_e^t \log \sum_{k\in e} \exp\{b\trans \e_k\}
+\end{align}
+
+\subsection{No features}
+If we eliminate all edges from the hypergraph except for $e_0$, then the result is a stochastic latent factor playlist model, along the lines of BPR-MF.
+All $p_e^t$ terms become 1, and the edge weights $w_e$ disappear from the model.  Note that in this case, bigram transitions disappear completely, and the lower-bounding objective 
+matches the data log-likelihood exactly (modulo constants).
+
+\begin{align}
+\phi(u_i) &\defeq   \sum_{y \in \Y_i} \sum_{t=0}^T \left( u_i\trans v_t - \log \sum_{k\in \X} \exp\{u_i\trans v_k + b_k\} \right)\\
+\phi(v_j) &\defeq   \sum_{i \in \U} \sum_{y \in \Y_i} \sum_{t=0}^T \left( u_i\trans v_t \ind{x_t = x_j} - \log \sum_{k\in \X} \exp\{u_i\trans v_k + b_k\} \right)\\
+\phi(b)   &\defeq   \sum_{i\in\U}\sum_{y\in\Y_i}\sum_{t=0}^T \left( b\trans \e_t - \log \sum_{k\in \X} \exp\{u_i\trans v_k + b\trans \e_k\} \right)
+\end{align}
 
 \end{document}
