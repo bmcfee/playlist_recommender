@@ -246,11 +246,11 @@ This results in the surrogate objective function
 \begin{equation}
 \phi(b) \defeq \sum_{i\in\U}\sum_{y\in\Y_i}\sum_{t=0}^T b\trans \e_t - \sum_{e\in\E} p_e^t \log \sum_{k\in e} \exp\{u_i\trans v_k + b\trans \e_k\}.\label{eq:bstep:surrogate}
 \end{equation}
-This function, again, is concave in $b$.  The gradient is computed as
+This function, again, is concave in $b$.  Including the prior penalty, the gradient is computed as
 \begin{align}
-\nabla_b &= \sum_{i\in\U}\sum_{y\in\Y_i}\sum_{t=0}^T \left( \e_t - \sum_{e\in\E} p_e^t \sum_{k\in e} \e_k \frac{\exp\{u_i\trans v_k + b\trans \e_k\}}{\sum_{j\in e} \exp\{u_i\trans
+\nabla_b &= -\frac{1}{\sigma_b^2} b + \sum_{i\in\U}\sum_{y\in\Y_i}\sum_{t=0}^T \left( \e_t - \sum_{e\in\E} p_e^t \sum_{k\in e} \e_k \frac{\exp\{u_i\trans v_k + b\trans \e_k\}}{\sum_{j\in e} \exp\{u_i\trans
 v_j + b\trans \e_j\}}  \right)\notag\\
-&= \sum_{i\in\U}\sum_{y\in\Y_i}\sum_{t=0}^T \left( \e_t - \sum_{e\in\E} p_e^t \frac{H_{\cdot, e} \odot \exp\{u_i\trans V + b \}}{ H_{\cdot,e}\trans \exp\{u_i\trans V + b\}}  \right)
+&= -\frac{1}{\sigma_b^2} b + \sum_{i\in\U}\sum_{y\in\Y_i}\sum_{t=0}^T \left( \e_t - \sum_{e\in\E} p_e^t \frac{H_{\cdot, e} \odot \exp\{u_i\trans V + b \}}{ H_{\cdot,e}\trans \exp\{u_i\trans V + b\}}  \right)
 \label{eq:bstep:gradient}.
 \end{align}
 
@@ -282,9 +282,9 @@ So the final surrogate objective is
 \end{equation}
 which is concave in $w$.
 
-The gradient is computed as
+Including the prior penalty, the gradient is computed as
 \begin{equation}
-\nabla_w = \sum_{i\in\U}\sum_{y\in\Y_i}\sum_{t=0}^T \sum_{e\in\E} \e_e H_{t-1,e} \left(\frac{H_{t,e} q_e}{(H_{t-1,\cdot} \odot H_{t,\cdot})\trans q} - \frac{\exp\{w\trans
+\nabla_w = -\frac{1}{\sigma_w^2} w + \sum_{i\in\U}\sum_{y\in\Y_i}\sum_{t=0}^T \sum_{e\in\E} \e_e H_{t-1,e} \left(\frac{H_{t,e} q_e}{(H_{t-1,\cdot} \odot H_{t,\cdot})\trans q} - \frac{\exp\{w\trans
 \e_e\}}{\displaystyle\sum_{f \in \E} H_{t-1,f} \exp\{w\trans \e_f\}}\right)
 \end{equation}
 
@@ -292,7 +292,16 @@ The gradient is computed as
 
 Here, we spell out the surrogate objectives for various special cases of the model.
 
-\subsection{No personalization}
+\subsection{No bias, no personalization}
+Fix $b=0$, $u_i=0$ for all users.  The latent factor terms $V$ disappear, and all that's left is the $w$ term.
+
+The $w$ objective remains relatively unchanged, except that the $q_e$ factors are now defined as
+\[
+q_e \defeq \frac{1}{|e|},
+\]
+since each song in $e$ has equal probability of being selected.
+
+\subsection{Bias, no personalization}
 
 Fix $u_i = 0$ for all users.  Then the latent factor terms $V$ all disappear from the model as well.
 The result is a popularity-adaptive version of the hypergraph model.
@@ -300,6 +309,12 @@ The result is a popularity-adaptive version of the hypergraph model.
 \begin{align}
 \phi(b) &\defeq \sum_{i\in\U}\sum_{y\in\Y_i}\sum_{t=0}^T b\trans \e_t - \sum_{e\in\E} p_e^t \log \sum_{k\in e} \exp\{b\trans \e_k\}
 \end{align}
+
+The $w$ updates are the same, but now with the $q_e$ factors defined as
+\[
+q_e \defeq \frac{1}{H_{\cdot, e}\trans \exp\{b\}},
+\]
+that is, the total amount of (unnormalized) song mass in edge $e$.
 
 \subsection{No features}
 If we eliminate all edges from the hypergraph except for $e_0$, then the result is a stochastic latent factor playlist model, along the lines of BPR-MF.
