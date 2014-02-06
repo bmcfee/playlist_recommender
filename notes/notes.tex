@@ -277,10 +277,16 @@ Let $q_e \defeq {(H_{\cdot, e}\trans \exp\{u_i\trans V + b\})}^{-1}$.  Then
 
 So the final surrogate objective is
 \begin{equation}
-\phi(w) \defeq \sum_{i\in\U}\sum_{y\in\Y_i}\sum_{t=0}^T \left(\sum_{e} \frac{H_{t-1,e} H_{t,e} q_e }{ (H_{t-1,\cdot} \odot H_{t, \cdot})\trans q }w\trans \e_e - \log
-H_{t-1,\cdot}\trans \exp\{w\}\right), \label{eq:wstep:surrogate}
+\phi(w) \defeq \sum_{i\in\U}\sum_{y\in\Y_i}\sum_{t=0}^T \left(\sum_{e\in\E} \frac{H_{t-1,e} H_{t,e} q_e }{ (H_{t-1,\cdot} \odot H_{t, \cdot})\trans q }w\trans \e_e - 
+\log \sum_{e \in \E} H_{t-1, e} \exp\{w_e\}\right), \label{eq:wstep:surrogate}
 \end{equation}
 which is concave in $w$.
+
+The gradient is computed as
+\begin{equation}
+\nabla_w = \sum_{i\in\U}\sum_{y\in\Y_i}\sum_{t=0}^T \sum_{e\in\E} \e_e H_{t-1,e} \left(\frac{H_{t,e} q_e}{(H_{t-1,\cdot} \odot H_{t,\cdot})\trans q} - \frac{\exp\{w\trans
+\e_e\}}{\displaystyle\sum_{f \in \E} H_{t-1,f} \exp\{w\trans \e_f\}}\right)
+\end{equation}
 
 \section{Model restrictions}
 
