@@ -5,6 +5,8 @@ import numpy as np
 import scipy.sparse
 import scipy.optimize
 
+
+from sklearn.utils import extmath
 from sklearn.base import BaseEstimator
 
 class PlaylistModel(BaseEstimator):
@@ -83,10 +85,13 @@ class PlaylistModel(BaseEstimator):
             self.n_factors = song_init.shape[1]
 
     def _fit_edges(self, H, P):
+        #
         # // pre-compute the user-edge affinity matrix
         # Q = 1.0/(H' * exp(u.dot(V.T) + b))
         #
-        # Lower-bounding objective function:
+        # // Convert H into a format that supports row-slicing
+        #
+        # // Lower-bounding objective function:
         # f         = 0
         # grad_f    = 0
         #
@@ -97,23 +102,26 @@ class PlaylistModel(BaseEstimator):
         #       // Hack the t=-1 case here
         #
         #       t       = p[0]
-        #       hq      = H[t,:] * q[i]
+        #       hq      = H[t] * q[i]
         #       hq      = hq / sum(hq)
         #       lw      = log_sum_exp(w)
         #       f       += w' * hq - lw
-        #       grad_f  += hq - soft_max(w)
+        #       grad_f  += hq - exp(w - lw)
         #
         #       for (prev, cur) in zip(p[:-1], p[1:])
         #           // compute coincident edges
-        #           hq = (H[prev, :] & H[cur, :]) * q[i]
+        #           hq = (H[prev] & H[cur]) * q[i]
         #           hq = hq / sum(hq)
         #
+        #           f               +=  w' * hq 
+        #           grad_f          +=  hq 
+        #
         #           // compute edge-selector normalization
-        #           // better to do this robustly, log_sum_exp(w[H[prev]])
-        #           lw = log_sum_exp(w[ H[prev] ])
+        #           w_sub = w[H[prev]]
+        #           lw = log_sum_exp(w_sub)
         #           
-        #           f       +=  w' * hq - lw
-        #           grad_f  +=  hq - softmax(w[H[prev]])
+        #           f[H[prev]]      = f[H[prev]] - lw
+        #           grad_f[H[prev]] = f[H[prev]] - exp(w_sub - lw)
         # 
         # f         += -0.5 * self.bias_prior * (w' * w)
         # grad_f    += - self.bias_prior * w
