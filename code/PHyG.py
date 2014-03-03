@@ -6,7 +6,7 @@ import scipy.sparse
 import scipy.optimize
 
 
-from sklearn.utils import extmath
+from sklearn.utils.extmath import logsumexp
 from sklearn.base import BaseEstimator
 
 class PlaylistModel(BaseEstimator):
@@ -85,48 +85,68 @@ class PlaylistModel(BaseEstimator):
             self.n_factors = song_init.shape[1]
 
     def _fit_edges(self, H, P):
-        #
-        # // pre-compute the user-edge affinity matrix
-        # Q = 1.0/(H' * exp(u.dot(V.T) + b))
-        #
-        # // Convert H into a format that supports row-slicing
-        #
-        # // Lower-bounding objective function:
-        # f         = 0
-        # grad_f    = 0
-        #
-        #
-        # for i in users
-        #
-        #   for p in playlists[i]
-        #       // Hack the t=-1 case here
-        #
-        #       t       = p[0]
-        #       hq      = H[t] * q[i]
-        #       hq      = hq / sum(hq)
-        #       lw      = log_sum_exp(w)
-        #       f       += w' * hq - lw
-        #       grad_f  += hq - exp(w - lw)
-        #
-        #       for (prev, cur) in zip(p[:-1], p[1:])
-        #           // compute coincident edges
-        #           hq = (H[prev] & H[cur]) * q[i]
-        #           hq = hq / sum(hq)
-        #
-        #           f               +=  w' * hq 
-        #           grad_f          +=  hq 
-        #
-        #           // compute edge-selector normalization
-        #           w_sub = w[H[prev]]
-        #           lw = log_sum_exp(w_sub)
-        #           
-        #           f[H[prev]]      = f[H[prev]] - lw
-        #           grad_f[H[prev]] = f[H[prev]] - exp(w_sub - lw)
-        # 
-        # f         += -0.5 * self.bias_prior * (w' * w)
-        # grad_f    += - self.bias_prior * w
+        
+        # pre-compute the user-edge affinity matrix
+        # can we do this in a way that doesn't pre-compute songs-by-users?
+        # what if we average songs per edge first?
+        Q = 1.0/(H.T * np.exp(self.u_.dot(self.v_.T) + self.b_))
 
-        pass
+        # Convert H into a format that supports row-slicing
+        
+        # Lower-bounding objective function:
+        def __objective(w, H, P):
+            f         = 0
+            grad_f    = np.zeros_like(w)
+        
+            def __bigram(w, q, Hprev, Hcur):
+                # Hprev = binary indicator vector of ``prev in E`` for each edge E
+                # Hcur = binary indicator vector of ``cur in E`` for each edge E
+          
+                # compute coincident edges
+                hq      = (Hprev & Hcur) * q
+                hq      /= sum(hq)
+        
+                _f              = w.dot( hq )
+                _grad_f         = hq
+        
+                # compute edge-selector normalization
+                w_sub   = w[Hprev]
+                lw      = logsumexp(w_sub)
+              
+                _f              -= lw
+                _grad_f[Hprev]  = _grad_f[Hprev] - np.exp(w_sub - lw)
+        
+                return _f, _grad_f
+        
+            H_dummy = np.ones(H.shape[1], dtype=bool)
+          
+            for user in P:
+
+                for pl in P[user]:
+                    # Hack the t=-1 case here
+        
+                    f0, gf0 = __bigram(w, Q[user], H_dummy, H[pl[0]])
+                    f       += f0
+                    grad_f  += gf0
+        
+                    for (prev, cur) in zip(pl[:-1], pl[1:]):
+                        f0, gf0 = __bigram(w, Q[user], H[prev], H[cur])
+                        f       += f0
+                        grad_f  += gf0
+        
+            # regularization (gaussian prior on w)
+        
+            f         += -0.5 * np.sum(w**2) / self.bias_prior
+            grad_f    += - w / self.bias_prior
+        
+            # negate objective and gradients, because we're maximizing
+            return -f, -grad_f
+
+        w, f, d = scipy.optimize.fmin_l_bfgs_b(func=__objective,
+                                                x0=self.w,
+                                                args=(H, P),
+                                                fprime=None)
+        return w
 
     def fit(self, H, P, params=None):
         """Fit the playlist model.
@@ -156,6 +176,8 @@ class PlaylistModel(BaseEstimator):
 
         # Probably it would be smarter to call out to an implicit-feedback
         # collaborative filter model for initialization
+        # bias could be initialized by raw playcount for each track
+        # user and song vectors could be initialized by partial svd
         if self.b_ is None:
             self.b_ = np.zeros(n_songs, dtype=np.float32)
 
@@ -171,7 +193,7 @@ class PlaylistModel(BaseEstimator):
         for _ in range(self.max_iter):
             if 'e' in params:
                 # Fit the edge weights
-                self._fit_edges(H, P)
+                self.w_ = self._fit_edges(H, P)
 
             if 'b' in params:
                 # Fit the song biases
