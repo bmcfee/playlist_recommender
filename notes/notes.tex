@@ -77,18 +77,16 @@ The bigram transition probability is defined by marginalizing over the edge set 
 
 Finally, the model parameters are defined by the following prior distributions
 \begin{align*}
-u_i &\sim \N(0, \sigma_u I)\\
-v_j &\sim \N(0, \sigma_v I)\\
-b_j &\sim \N(0, \sigma_b)\\
-w_e &\sim \N(0, \sigma_w).\\
+u_i &\sim \N\left(0, \sigma^2_u I\right)\\
+v_j &\sim \N\left(0, \sigma^2_v I\right)\\
+b_j &\sim \N\left(0, \sigma^2_b\right)\\
+w_e &\sim \N\left(0, \sigma^2_w\right).\\
 \end{align*}
 
-This differs from the previous hypergraph random walk model in that the edge weights are log-normal instead of
-exponentially distributed.  \xx{This might work better as a Laplacian distribution.  The same goes for song bias $b_j$.
-We'd lose differentiability though.}
+This differs from the previous hypergraph random walk model in that the edge weights are log-normal instead of exponentially distributed.  
 
 Note that all sums over edge membership indicators can be implemented as a dot product against the (sparse, constant) 
-song-edge incidence matrix $H \in \{0,1\}^{|\X|, |\E|}$.  If we overload notation, and let $U \in \R^{d\times m}$, $V \in \R^{d \times n}$, $b \in \R^{n}$ and $w \in
+song-edge incidence matrix $H \in \{0,1\}^{|\X| \times |\E|}$.  If we overload notation, and let $U \in \R^{d\times m}$, $V \in \R^{d \times n}$, $b \in \R^{n}$ and $w \in
 \R^{|\E|}$, then the probabilities can be expressed compactly as follows.
 
 \begin{align*}
@@ -115,7 +113,8 @@ change of prior.
 Note that sampling is relatively efficient if the edge sets are small (on average) and $H$ is sparse.
 
 \section{Parameter estimation}
-Given a sample $\Y$, we seek the MAP parameters 
+Given a sample collection of independent playlists $\Y = \{y\}$, we seek the MAP 
+parameters 
 \begin{align*}
 \overline{\Theta} \in \argmax_\Theta \P\left[\Theta\given \Y\right] &= \argmax_\Theta \P\left[\Y\given\Theta\right]\P\left[\Theta\right]\\
 &= \argmax_\Theta \log \P\left[\Y\given\Theta\right] + \log\P[\Theta]\\
@@ -130,10 +129,11 @@ The $U$ matrix can be decomposed into its columns, $U = [u_1, u_2, \cdots, u_m]$
 Since users are independent, the columns of $u$ can be optimized independently.  Note also that each $u_i$ depends only on the playlists for user $i$.
 
 Let $\Y_i$ denote the playlists of user $i$. The data term for the objective over $u_i$ looks as follows:\footnote{Throughout this document, canceled terms (slashed in red) are 
-constant with respect to the variable of optimization.}
+constant with respect to the variable of optimization.  }
 \begin{align}
 f(u_i) &\defeq \sum_{y \in \Y_i} \log\P\left[y\given u_i, V, b, w\right]\notag\\
-&= \sum_{y \in \Y_i}\left( \log \P\left[x_0 \given u_i, V, b, w \right] + \sum_{t=1}^T \log \P\left[x_t \given x_{t-1}, u_i, V, b, w \right] \right)\label{eq:ustep:obj}
+&= \sum_{y \in \Y_i}\left( \log \P\left[x_0 \given u_i, V, b, w \right] +
+\sum_{t=1}^{T_y} \log \P\left[x_t \given x_{t-1}, u_i, V, b, w \right] \right)\label{eq:ustep:obj}
 \end{align}
 As noted in the previous section, the initial song likelihood is computed as:
 \begin{align}
@@ -160,6 +160,9 @@ the summation.  To ease presentation, let ${\E_{t-1,t} = \{e \given e \in \E,\, 
 \begin{align}
 \log\sum_{e\in \E} \exp\{w_e\} \frac{H_{t-1,e} H_{t, e} }{H_{\cdot,e}\trans \exp\{u_i\trans V + b \} }
 &= \log\sum_{e \in \E_{t-1,t}} \exp\{w_e\} \frac{1}{H_{\cdot, e}\trans \exp\{u_i\trans V + b\} }\notag\\
+&= \log\left( \left(\frac{\sum_{f \in \E_{t-1,t}} \exp\{w_f\}}{\sum_{f \in \E_{t-1,t}}
+\exp\{w_f\}} \right) \sum_{e \in \E_{t-1,t}} \exp\{w_e\} \frac{1}{H_{\cdot, e}\trans
+\exp\{u_i\trans V + b\} }\right)\notag\\
 &= \log\sum_{e \in \E_{t-1,t}} \frac{\exp\{w_e\}}{\displaystyle\sum_{f\in\E_{t-1,t}} \exp\{w_f\}} \frac{1}{H_{\cdot, e}\trans \exp\{u_i\trans V + b\} } + \ccancel[red]{\log \sum_{f \in \E_{t-1,t}} \exp\{w_f\}}\notag\\
 &\gtrsim -\sum_{e \in \E_{t-1,t}} \frac{\exp\{w_e\}}{\displaystyle\sum_{f\in\E_{t-1,t}} \exp\{w_f\}} \log H_{\cdot, e}\trans \exp\{u_i\trans V + b\}  \notag\\
 &= -\sum_{e\in\E} \frac{H_{t-1,e} H_{t,e} \exp\{w_e\}}{ (H_{t-1,\cdot} \odot H_{t,\cdot})\trans \exp\{w\}} \log H_{\cdot, e}\trans \exp\{u_i\trans V + b\}  \label{eq:ustep:concave}.
@@ -169,7 +172,7 @@ the summation.  To ease presentation, let ${\E_{t-1,t} = \{e \given e \in \E,\, 
 Note that applying the same approximation to \cref{eq:ustep:initial} results in the same form as \cref{eq:ustep:concave}, assuming a phantom initial transition point from $t=-1$ 
 as described above.  Combining terms, we achieve the lower-bound approximation:
 \begin{equation}
-f(u_i) \gtrsim \phi(u_i) = \sum_{y \in \Y_i} \left(\sum_{t=0}^T u_i\trans v_t - \sum_{e \in \E} \frac{H_{t-1,e} H_{t,e} \exp\{w_e\}}{ (H_{t-1,\cdot}\odot H_{t,\cdot})\trans \exp\{w\}} \log
+f(u_i) \gtrsim \phi(u_i) = \sum_{y \in \Y_i} \left(\sum_{t=0}^{T_y} u_i\trans v_t - \sum_{e \in \E} \frac{H_{t-1,e} H_{t,e} \exp\{w_e\}}{ (H_{t-1,\cdot}\odot H_{t,\cdot})\trans \exp\{w\}} \log
 \sum_{k\in e} \exp\{u_i\trans v_k + b_k\} \right)\label{eq:ustep:concave_obj}
 \end{equation}
 Finally, the gaussian prior on $u_i \sim \N(0, \sigma_u^2 I)$ results in a quadratic penalty of $g(u) = -\frac{1}{2\sigma^2}\|u_i\|^2$.
@@ -177,21 +180,47 @@ Finally, the gaussian prior on $u_i \sim \N(0, \sigma_u^2 I)$ results in a quadr
 The total surrogate objective, $\phi(u) + g(u)$ is differentiable and concave, and can be easily optimized by quasi-newton methods such as L-BFGS.
 Note that due to independence among users, all user vectors can be optimized in parallel.
 
-The optimization can be streamlined by pre-computing the edge weight distribution for each observed bigram.  Let 
+The optimization can be streamlined by pre-computing the edge weight distribution for
+each observed bigram $(t-1, t)$.  Let 
 \[
-p_e^t \defeq \frac{H_{t-1,e}H_{t,e} \exp\{w_e\}}{(H_{t-1,\cdot}\odot H_{t,\cdot})\trans \exp\{w\}},
+p_e^t \defeq \frac{H_{t-1,e}H_{t,e} \exp\{w_e\}}{(H_{t-1,\cdot}\odot
+H_{t,\cdot})\trans \exp\{w\}}
+\quad \Rightarrow \quad p^t \propto H_{t-1,\cdot} \odot H_{t, \cdot} \odot \exp\{w\},
 \]
-with $H_{-1,\cdot} = \one\trans$.  Then the optimization can be written as 
-\[
-g(u_i) + \phi(u_i) = -\frac{1}{2\sigma_u^2} \|u_i\|^2 + \sum_{y \in \Y_i} \left(\sum_{t=0}^T u_i\trans v_t - \sum_{e \in \E} p_e^t \log \sum_{k\in e} \exp\{u_i\trans v_k + b_k\} \right)
-\]
+with $H_{-1,\cdot} = \one\trans$ so that $p^0 \propto H_{0,\cdot} \odot \exp\{w\}$.  Then the optimization can be written as 
+\begin{align}
+g(u_i) + \phi(u_i) &= -\frac{1}{2\sigma_u^2} \|u_i\|^2 + \sum_{y \in \Y_i}
+\left(\sum_{t=0}^{T_y} u_i\trans v_t - \sum_{e \in \E} p_e^t \log \sum_{k\in e}
+\exp\{u_i\trans v_k + b_k\} \right)\\
+&= - \frac{1}{2\sigma_u^2} \|u_i\|^2 + \sum_{y \in \Y_i} \left( 
+\sum_{t=0}^{T_y} u_i\trans v_t - \left(p^t\right)\trans \log H\trans \exp \{u_i\trans V + b\} \right)
+\end{align}
 with gradient
 \begin{align}
-\nabla_{u_i} &= -\frac{1}{\sigma_u^2} u_i + \sum_{y \in \Y_i} \left(\sum_{t=0}^T v_t - \sum_{e \in \E} p_e^t \sum_{k\in e} v_k \frac{\exp\{u_i\trans v_k + b_k\}}{\sum_{j \in e}
+\nabla_{u_i} &= -\frac{1}{\sigma_u^2} u_i + \sum_{y \in \Y_i} \left(\sum_{t=0}^{T_y} v_t - \sum_{e \in \E} p_e^t \sum_{k\in e} v_k \frac{\exp\{u_i\trans v_k + b_k\}}{\sum_{j \in e}
 \exp\{u_i \trans v_j + b_j\}} \right)\notag\\
-&= -\frac{1}{\sigma_u^2} u_i + \sum_{y \in \Y_i} \left(\sum_{t=0}^T v_t - \sum_{e \in \E} p_e^t \sum_{k\in e} v_k \frac{\exp\{u_i\trans v_k + b_k\}}{H_{\cdot,e}\trans \exp\{u_i \trans
+&= -\frac{1}{\sigma_u^2} u_i + \sum_{y \in \Y_i} \left(\sum_{t=0}^{T_y} v_t - \sum_{e \in \E} p_e^t \sum_{k\in e} v_k \frac{\exp\{u_i\trans v_k + b_k\}}{H_{\cdot,e}\trans \exp\{u_i \trans
 V + b\}} \right).\label{eq:ustep:gradient}
 \end{align}
+
+For each user, the set of playlists (and bigrams) is likely to be small.  Similarly,
+the $p^t$ weights can be encoded as a sparse matrix for greater efficiency.  Note also
+that the factor $\log \sum_{k\in e} \exp\{u_i\trans v_k + b_k \}$ is
+constant over the playlist summation; each bigram simply changes the weighting factor
+$p_e^t$.  These values can therefore be cached while computing the objective (and
+gradient) at each iterate $u_i^{(\delta)}$.
+
+The terms in the objective can loosely be interpreted as pulling the user vector
+toward the centroid of each edge, weighted by the user's affinity for the items in
+that edge.
+
+% Operations:
+%   compute user-track affinity for all tracks
+%   aggregate to user-edge affinities (dot against H)
+%   compute affinity-weighted edge centroids
+%   for each playlist
+%       compute song factor centroid
+%       compute bigram edge weights
 
 \subsection{$V$-step | $U, b, w$ fixed}
 For the $V$-step, note that all approximations applied in the derivation of the $U$-step can be applied just as well, since they only affect the edge weight factors $w$ and bias terms
@@ -203,14 +232,14 @@ Instead, song factors will be optimized by cyclic block coordinate ascent on eac
 
 Recall that the data log-likehood can be lower-bounded by the sum over all users, playlists, and transitions:
 \[
-\Ell(\Y; \Theta) \gtrsim \sum_{i \in \U} \sum_{y \in \Y_i} \left(\sum_{t=0}^T u_i\trans v_t - \sum_{e \in \E} p_e^t \log \sum_{k\in e} \exp\{u_i\trans v_k + b_k\} \right)
+\Ell(\Y; \Theta) \gtrsim \sum_{i \in \U} \sum_{y \in \Y_i} \left(\sum_{t=0}^{T_y} u_i\trans v_t - \sum_{e \in \E} p_e^t \log \sum_{k\in e} \exp\{u_i\trans v_k + b_k\} \right)
 \]
 
 This leads to the lower-bounding objective 
 \begin{align*}
-f(V) \gtrsim \phi(V) &\defeq \sum_{i \in \U} \sum_{y \in \Y_i} \left(\sum_{t=0}^T u_i\trans V \e_t - \sum_{e \in \E} p_e^t \log \sum_{k\in \X} H_{k,e} \exp\{u_i\trans V \e_k + b_k\}
+f(V) \gtrsim \phi(V) &\defeq \sum_{i \in \U} \sum_{y \in \Y_i} \left(\sum_{t=0}^{T_y} u_i\trans V \e_t - \sum_{e \in \E} p_e^t \log \sum_{k\in \X} H_{k,e} \exp\{u_i\trans V \e_k + b_k\}
 \right)\\
-&= \sum_{i \in \U} \sum_{y \in \Y_i} \left(\sum_{t=0}^T \trace\left(\e_t u_i\trans V\right)- \sum_{e \in \E} p_e^t \log \sum_{k\in \X} H_{k,e} \exp\left\{\trace\left(\e_k u_i\trans
+&= \sum_{i \in \U} \sum_{y \in \Y_i} \left(\sum_{t=0}^{T_y} \trace\left(\e_t u_i\trans V\right)- \sum_{e \in \E} p_e^t \log \sum_{k\in \X} H_{k,e} \exp\left\{\trace\left(\e_k u_i\trans
 V\right) + b_k\right\} \right)
 \end{align*}
 The term $u_i\trans v_t$ only counts if the user selects song $v_j$, and the normalization term only counts for edges which contain $v_j$.  Again, the approximation is concave and
@@ -223,7 +252,8 @@ The gradient of the penalized objective can be computed as
 % \end{align}
 
 \begin{align}
-\nabla_{V} &= -\frac{1}{\sigma_v^2} V + \sum_{i \in \U} u_i \left(\sum_{y \in \Y_i} \sum_{t=0}^T \e_t\trans
+\nabla_{V} &= -\frac{1}{\sigma_v^2} V + \sum_{i \in \U} u_i \left(\sum_{y \in \Y_i}
+\sum_{t=0}^{T_y} \e_t\trans
 - \sum_{e \in \E} p_e^t \sum_{j \in \X} \e_j\trans \cdot \frac{H_{j,e} \exp\left\{\trace\left( \e_j u_i\trans V\right) + b_j\right\}}{\sum_{k\in\X} H_{k,e}
   \exp\left\{\trace\left(\e_k u_i\trans V\right) + b_k\right\}}
 \right).
@@ -231,9 +261,15 @@ The gradient of the penalized objective can be computed as
 
 \subsubsection{Consensus optimization}
 Note that the lower bound is jointly concave in $V$. As such, we should be able to use ADMM to accelerate convergence over the columns by consensus optimization.  This would work by
-introducing auxiliary variables $\nu_j \eqsim v_j$ which appear everywhere except in the denominator of the normalization.  Then we can scatter-gather the column updates easily.
+introducing auxiliary variables $m_j \eqsim v_j$ which appear everywhere except in the denominator of the normalization.  Then we can scatter-gather the column updates easily.
+For any $j$, we can split the objective 
 
-\xx{TODO}
+\begin{align*}
+\phi(V, M_j) &= \sum_{i \in \U} \sum_{y \in \Y_i} \left(\sum_{t=0}^{T_y} \ind{t = j} u_i\trans m_j - 
+\sum_{e \in \E} p_e^t \log\left( H_{j,e}\exp\left\{u_i\trans m_j + b_j\right\}
++ \sum_{k\neq j \in \X} H_{k,e} \exp\left\{\trace\left(\e_k u_i\trans V\right) + b_k\right\}\right) \right)
+\end{align*}
+
 
 \subsection{$b$-step | $U, V, w$ fixed}
 For the $b$-step, we follow the same general approach as the $U$-step, although the initial approximation differs.
@@ -254,13 +290,13 @@ Now, applying the same lower bounding technique, we get
 \end{align}
 This results in the surrogate objective function
 \begin{equation}
-\phi(b) \defeq \sum_{i\in\U}\sum_{y\in\Y_i}\sum_{t=0}^T b\trans \e_t - \sum_{e\in\E} p_e^t \log \sum_{k\in e} \exp\{u_i\trans v_k + b\trans \e_k\}.\label{eq:bstep:surrogate}
+\phi(b) \defeq \sum_{i\in\U}\sum_{y\in\Y_i}\sum_{t=0}^{T_y} b\trans \e_t - \sum_{e\in\E} p_e^t \log \sum_{k\in e} \exp\{u_i\trans v_k + b\trans \e_k\}.\label{eq:bstep:surrogate}
 \end{equation}
 This function, again, is concave in $b$.  Including the prior penalty, the gradient is computed as
 \begin{align}
-\nabla_b &= -\frac{1}{\sigma_b^2} b + \sum_{i\in\U}\sum_{y\in\Y_i}\sum_{t=0}^T \left( \e_t - \sum_{e\in\E} p_e^t \sum_{k\in e} \e_k \frac{\exp\{u_i\trans v_k + b\trans \e_k\}}{\sum_{j\in e} \exp\{u_i\trans
+\nabla_b &= -\frac{1}{\sigma_b^2} b + \sum_{i\in\U}\sum_{y\in\Y_i}\sum_{t=0}^{T_y} \left( \e_t - \sum_{e\in\E} p_e^t \sum_{k\in e} \e_k \frac{\exp\{u_i\trans v_k + b\trans \e_k\}}{\sum_{j\in e} \exp\{u_i\trans
 v_j + b\trans \e_j\}}  \right)\notag\\
-&= -\frac{1}{\sigma_b^2} b + \sum_{i\in\U}\sum_{y\in\Y_i}\sum_{t=0}^T \left( \e_t - \sum_{e\in\E} p_e^t \frac{H_{\cdot, e} \odot \exp\{u_i\trans V + b \}}{ H_{\cdot,e}\trans \exp\{u_i\trans V + b\}}  \right)
+&= -\frac{1}{\sigma_b^2} b + \sum_{i\in\U}\sum_{y\in\Y_i}\sum_{t=0}^{T_y} \left( \e_t - \sum_{e\in\E} p_e^t \frac{H_{\cdot, e} \odot \exp\{u_i\trans V + b \}}{ H_{\cdot,e}\trans \exp\{u_i\trans V + b\}}  \right)
 \label{eq:bstep:gradient}.
 \end{align}
 
@@ -287,14 +323,14 @@ Let $q_e \defeq {(H_{\cdot, e}\trans \exp\{u_i\trans V + b\})}^{-1}$.  Then
 
 So the final surrogate objective is
 \begin{equation}
-\phi(w) \defeq \sum_{i\in\U}\sum_{y\in\Y_i}\sum_{t=0}^T \left(\sum_{e\in\E} \frac{H_{t-1,e} H_{t,e} q_e }{ (H_{t-1,\cdot} \odot H_{t, \cdot})\trans q }w\trans \e_e - 
+\phi(w) \defeq \sum_{i\in\U}\sum_{y\in\Y_i}\sum_{t=0}^{T_y} \left(\sum_{e\in\E} \frac{H_{t-1,e} H_{t,e} q_e }{ (H_{t-1,\cdot} \odot H_{t, \cdot})\trans q }w\trans \e_e - 
 \log \sum_{e \in \E} H_{t-1, e} \exp\{w_e\}\right), \label{eq:wstep:surrogate}
 \end{equation}
 which is concave in $w$.
 
 Including the prior penalty, the gradient is computed as
 \begin{equation}
-\nabla_w = -\frac{1}{\sigma_w^2} w + \sum_{i\in\U}\sum_{y\in\Y_i}\sum_{t=0}^T \sum_{e\in\E} \e_e H_{t-1,e} \left(\frac{H_{t,e} q_e}{(H_{t-1,\cdot} \odot H_{t,\cdot})\trans q} - \frac{\exp\{w\trans
+\nabla_w = -\frac{1}{\sigma_w^2} w + \sum_{i\in\U}\sum_{y\in\Y_i}\sum_{t=0}^{T_y} \sum_{e\in\E} \e_e H_{t-1,e} \left(\frac{H_{t,e} q_e}{(H_{t-1,\cdot} \odot H_{t,\cdot})\trans q} - \frac{\exp\{w\trans
 \e_e\}}{\displaystyle\sum_{f \in \E} H_{t-1,f} \exp\{w\trans \e_f\}}\right)
 \end{equation}
 
@@ -317,7 +353,7 @@ Fix $u_i = 0$ for all users.  Then the latent factor terms $V$ all disappear fro
 The result is a popularity-adaptive version of the hypergraph model.
 
 \begin{align}
-\phi(b) &\defeq \sum_{i\in\U}\sum_{y\in\Y_i}\sum_{t=0}^T b\trans \e_t - \sum_{e\in\E} p_e^t \log \sum_{k\in e} \exp\{b\trans \e_k\}
+\phi(b) &\defeq \sum_{i\in\U}\sum_{y\in\Y_i}\sum_{t=0}^{T_y} b\trans \e_t - \sum_{e\in\E} p_e^t \log \sum_{k\in e} \exp\{b\trans \e_k\}
 \end{align}
 
 The $w$ updates are the same, but now with the $q_e$ factors defined as
@@ -332,9 +368,9 @@ All $p_e^t$ terms become 1, and the edge weights $w_e$ disappear from the model.
 matches the data log-likelihood exactly (modulo constants).
 
 \begin{align}
-\phi(u_i) &\defeq   \sum_{y \in \Y_i} \sum_{t=0}^T \left( u_i\trans v_t - \log \sum_{k\in \X} \exp\{u_i\trans v_k + b_k\} \right)\\
-\phi(v_j) &\defeq   \sum_{i \in \U} \sum_{y \in \Y_i} \sum_{t=0}^T \left( u_i\trans v_t \ind{x_t = x_j} - \log \sum_{k\in \X} \exp\{u_i\trans v_k + b_k\} \right)\\
-\phi(b)   &\defeq   \sum_{i\in\U}\sum_{y\in\Y_i}\sum_{t=0}^T \left( b\trans \e_t - \log \sum_{k\in \X} \exp\{u_i\trans v_k + b\trans \e_k\} \right)
+\phi(u_i) &\defeq   \sum_{y \in \Y_i} \sum_{t=0}^{T_y} \left( u_i\trans v_t - \log \sum_{k\in \X} \exp\{u_i\trans v_k + b_k\} \right)\\
+\phi(v_j) &\defeq   \sum_{i \in \U} \sum_{y \in \Y_i} \sum_{t=0}^{T_y} \left( u_i\trans v_t \ind{x_t = x_j} - \log \sum_{k\in \X} \exp\{u_i\trans v_k + b_k\} \right)\\
+\phi(b)   &\defeq   \sum_{i\in\U}\sum_{y\in\Y_i}\sum_{t=0}^{T_y} \left( b\trans \e_t - \log \sum_{k\in \X} \exp\{u_i\trans v_k + b\trans \e_k\} \right)
 \end{align}
 
 \end{document}
