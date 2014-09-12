@@ -64,6 +64,9 @@ class PlaylistModel(BaseEstimator):
             - 's' : songs
         """
 
+        if 'u' not in params or 'v' not in params:
+            n_factors = 0
+
         self.max_iter   = max_iter
         self.params     = params
         self.n_factors  = n_factors
