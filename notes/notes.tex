@@ -164,7 +164,11 @@ the summation.  To ease presentation, let ${\E_{t-1,t} = \{e \given e \in \E,\, 
 \exp\{w_f\}} \right) \sum_{e \in \E_{t-1,t}} \exp\{w_e\} \frac{1}{H_{\cdot, e}\trans
 \exp\{u_i\trans V + b\} }\right)\notag\\
 &= \log\sum_{e \in \E_{t-1,t}} \frac{\exp\{w_e\}}{\displaystyle\sum_{f\in\E_{t-1,t}} \exp\{w_f\}} \frac{1}{H_{\cdot, e}\trans \exp\{u_i\trans V + b\} } + \ccancel[red]{\log \sum_{f \in \E_{t-1,t}} \exp\{w_f\}}\notag\\
-&\gtrsim -\sum_{e \in \E_{t-1,t}} \frac{\exp\{w_e\}}{\displaystyle\sum_{f\in\E_{t-1,t}} \exp\{w_f\}} \log H_{\cdot, e}\trans \exp\{u_i\trans V + b\}  \notag\\
+&\gtrsim \sum_{e \in \E_{t-1,t}}
+\frac{\exp\{w_e\}}{\displaystyle\sum_{f\in\E_{t-1,t}}
+\exp\{w_f\}} \log \frac{1}{H_{\cdot, e}\trans \exp\{u_i\trans
+V + b\}}  \notag\\
+&= -\sum_{e \in \E_{t-1,t}} \frac{\exp\{w_e\}}{\displaystyle\sum_{f\in\E_{t-1,t}} \exp\{w_f\}} \log H_{\cdot, e}\trans \exp\{u_i\trans V + b\}  \notag\\
 &= -\sum_{e\in\E} \frac{H_{t-1,e} H_{t,e} \exp\{w_e\}}{ (H_{t-1,\cdot} \odot H_{t,\cdot})\trans \exp\{w\}} \log H_{\cdot, e}\trans \exp\{u_i\trans V + b\}  \label{eq:ustep:concave}.
 \end{align}
 \Cref{eq:ustep:concave} is a convex combination of negative log-sum-exp terms, and is therefore concave in $u_i$.  
@@ -228,7 +232,7 @@ $b$.
 
 Note that each song factor $v_i$ appears in all terms of the MAP objective, due to the normalization over song selection and requirement that each potential transition has nonzero 
 probability.  Consequently, there is no obvious independence structure here, nor implicit parallelism.  
-Instead, song factors will be optimized by cyclic block coordinate ascent on each $v_i$ with all $V_{\setminus i}$ held fixed.
+Instead, song factors can be optimized by cyclic block coordinate ascent on each $v_i$ with all $V_{\setminus i}$ held fixed.
 
 Recall that the data log-likehood can be lower-bounded by the sum over all users, playlists, and transitions:
 \[
@@ -242,7 +246,7 @@ f(V) \gtrsim \phi(V) &\defeq \sum_{i \in \U} \sum_{y \in \Y_i} \left(\sum_{t=0}^
 &= \sum_{i \in \U} \sum_{y \in \Y_i} \left(\sum_{t=0}^{T_y} \trace\left(\e_t u_i\trans V\right)- \sum_{e \in \E} p_e^t \log \sum_{k\in \X} H_{k,e} \exp\left\{\trace\left(\e_k u_i\trans
 V\right) + b_k\right\} \right)
 \end{align*}
-The term $u_i\trans v_t$ only counts if the user selects song $v_j$, and the normalization term only counts for edges which contain $v_j$.  Again, the approximation is concave and
+The term $u_i\trans v_t$ only counts if a user selects song $v_j$, and the normalization term only counts for edges which contain $v_j$.  Again, the approximation is concave and
 differentiable, and amenable to optimization via L-BFGS.
 
 The gradient of the penalized objective can be computed as 
@@ -259,16 +263,16 @@ The gradient of the penalized objective can be computed as
 \right).
 \end{align}
 
-\subsubsection{Consensus optimization}
-Note that the lower bound is jointly concave in $V$. As such, we should be able to use ADMM to accelerate convergence over the columns by consensus optimization.  This would work by
-introducing auxiliary variables $m_j \eqsim v_j$ which appear everywhere except in the denominator of the normalization.  Then we can scatter-gather the column updates easily.
-For any $j$, we can split the objective 
+% \subsubsection{Consensus optimization}
+% Note that the lower bound is jointly concave in $V$. As such, we should be able to use ADMM to accelerate convergence over the columns by consensus optimization.  This would work by
+% introducing auxiliary variables $m_j \approx v_j$ which appear everywhere except in the denominator of the normalization.  Then we can scatter-gather the column updates easily.
+% For any $j$, we can split the objective 
 
-\begin{align*}
-\phi(V, M_j) &= \sum_{i \in \U} \sum_{y \in \Y_i} \left(\sum_{t=0}^{T_y} \ind{t = j} u_i\trans m_j - 
-\sum_{e \in \E} p_e^t \log\left( H_{j,e}\exp\left\{u_i\trans m_j + b_j\right\}
-+ \sum_{k\neq j \in \X} H_{k,e} \exp\left\{\trace\left(\e_k u_i\trans V\right) + b_k\right\}\right) \right)
-\end{align*}
+% \begin{align*}
+% \phi(V, M_j) &= \sum_{i \in \U} \sum_{y \in \Y_i} \left(\sum_{t=0}^{T_y} \ind{t = j} u_i\trans m_j - 
+% \sum_{e \in \E} p_e^t \log\left( H_{j,e}\exp\left\{u_i\trans m_j + b_j\right\}
+% + \sum_{k\neq j \in \X} H_{k,e} \exp\left\{\trace\left(\e_k u_i\trans V\right) + b_k\right\}\right) \right)
+% \end{align*}
 
 
 \subsection{$b$-step | $U, V, w$ fixed}
@@ -324,7 +328,7 @@ Let $q_e \defeq {(H_{\cdot, e}\trans \exp\{u_i\trans V + b\})}^{-1}$.  Then
 So the final surrogate objective is
 \begin{equation}
 \phi(w) \defeq \sum_{i\in\U}\sum_{y\in\Y_i}\sum_{t=0}^{T_y} \left(\sum_{e\in\E} \frac{H_{t-1,e} H_{t,e} q_e }{ (H_{t-1,\cdot} \odot H_{t, \cdot})\trans q }w\trans \e_e - 
-\log \sum_{e \in \E} H_{t-1, e} \exp\{w_e\}\right), \label{eq:wstep:surrogate}
+\log H_{t-1, \cdot}^\mathsf{T} \exp\{w\}\right), \label{eq:wstep:surrogate}
 \end{equation}
 which is concave in $w$.
 
