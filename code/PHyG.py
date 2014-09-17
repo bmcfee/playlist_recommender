@@ -91,9 +91,6 @@ class PlaylistModel(BaseEstimator):
         if song_init is not None:
             self.n_factors = song_init.shape[1]
 
-        if memory is not None:
-            self.sample_negatives = memory.cache(self.sample_negatives)
-
 
     def _fit_users(self, iter=None):
         # Generate negative samples
@@ -193,7 +190,7 @@ def user_optimize(n_noise, H, w, reg, v, b, bigrams, u0=None):
         - reg : float >= 0
           Regularization penalty
 
-        - v : ndarray, shape=(d, n_songs)
+        - v : ndarray, shape=(n_songs, d)
           Latent factor representation of items
 
         - b : ndarray, shape=(n_songs,)
@@ -225,12 +222,14 @@ def user_optimize(n_noise, H, w, reg, v, b, bigrams, u0=None):
     y = np.ones(len(pos_ids) + len(noise_ids))
     y[len(pos_ids):] = -1
 
+    # The first bunch are positive examples, and get weight=+1
     weights = np.ones_like(y)
+    # The remaining examples get noise weights
     weights[len(pos_ids):] = noise_weights
 
     ids = np.concatenate([pos_ids, noise_ids])
 
-    return user_optimize_objective(reg, v[:, ids], b[ids], y, weights, u0=u0)
+    return user_optimize_objective(reg, v[ids], b[ids], y, weights, u0=u0)
 
 
 def user_optimize_objective(reg, v, b, y, omega, u0=None):
@@ -240,7 +239,7 @@ def user_optimize_objective(reg, v, b, y, omega, u0=None):
         - reg : float >= 0
           Regularization penalty
 
-        - v : ndarray, shape=(d, m)
+        - v : ndarray, shape=(m, d)
           Latent factor representations for items
 
         - b : ndarray, shape=(m,)
@@ -268,11 +267,11 @@ def user_optimize_objective(reg, v, b, y, omega, u0=None):
         '''
 
         # Compute the scores
-        scores = y * (u.dot(v) + b)
+        scores = y * (v.dot(u) + b)
     
         f = reg * 0.5 * np.sum(u**2) + omega.dot(np.logaddexp(0, -scores))
         
-        grad = reg * u - v.dot(y * omega / (1.0 + np.exp(scores)))
+        grad = reg * u - v.T.dot(y * omega / (1.0 + np.exp(scores)))
     
         return f, grad
 
