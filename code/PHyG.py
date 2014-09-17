@@ -6,7 +6,6 @@ import scipy.sparse
 import scipy.optimize
 import joblib
 
-from sklearn.utils.extmath import logsumexp
 from sklearn.base import BaseEstimator
 
 class PlaylistModel(BaseEstimator):
@@ -96,11 +95,6 @@ class PlaylistModel(BaseEstimator):
             self.sample_negatives = memory.cache(self.sample_negatives)
 
 
-    def sample_negatives(self, user_id, H, iter):
-        '''generate n_neg negative samples for the user'''
-
-        pass
-
     def _fit_users(self, iter=None):
         # Generate negative samples
         # Solve over all users in parallel
@@ -114,17 +108,21 @@ class PlaylistModel(BaseEstimator):
 
         pass
 
+
     def _fit_songs(self, iter=None):
 
         pass
+
 
     def _fit_bias(self, iter=None):
 
         pass
 
+
     def _fit_edges(self, iter=None):
 
         pass
+
 
     def fit(self, playlists, H):
         '''fit the model.
@@ -135,3 +133,158 @@ class PlaylistModel(BaseEstimator):
           - H : sparse matrix (n_songs, n_edges)
         '''
         pass
+
+#-- Static methods: things that can parallelize
+
+def sample_noise_items(n_neg, H, edge_dist, b, y_pos):
+    '''Sample n_neg items from the noise distribution, forbidding observed samples y_pos.
+
+    '''
+
+    y_forbidden = set(y_pos)
+
+    edge_dist = edge_dist / np.sum(edge_dist)
+
+    full_item_dist = np.exp(b)
+
+    # Knock out forbidden items
+    full_item_dist[list(y_forbidden)] = 0.0
+
+    noise_ids = []
+
+    while len(noise_ids) < n_neg:
+        # Sample an edge
+        edge_id = np.flatnonzero(np.random.multinomial(1, edge_dist))
+
+        item_dist = H[edge_id] * full_item_dist
+
+        item_dist_norm = np.sum(item_dist)
+
+        if not item_dist_norm:
+            continue
+
+        item_dist /= item_dist_norm
+
+        while True:
+            new_item = np.flatnonzero(np.random.multinomial(1, item_dist))
+
+            if new_item not in y_forbidden:
+                break
+
+        y_forbidden.add(new_item)
+        noise_ids.append(new_item)
+        full_item_dist[new_item] = 0.0
+
+    return noise_ids
+
+def user_optimize(n_noise, H, w, reg, v, b, bigrams, u0=None):
+    '''Optimize a user's latent factor representation
+
+    :parameters:
+        - n_noise : int > 0
+          # noise items to sample
+
+        - H : scipy.sparse.csr_matrix, shape=(n_songs, n_edges)
+          The hypergraph adjacency matrix
+
+        - w : ndarray, shape=(n_edges,)
+          edge weight array
+
+        - reg : float >= 0
+          Regularization penalty
+
+        - v : ndarray, shape=(d, n_songs)
+          Latent factor representation of items
+
+        - b : ndarray, shape=(n_songs,)
+          Bias terms for songs
+
+        - bigrams : iterable of tuples (s, t)
+          Observed bigrams for the user
+
+        - u0 : None or ndarray, shape=(d,)
+          Optional initial value for u
+    '''
+
+    # 1. Extract positive ids
+    pos_ids = [t for (s, t) in bigrams]
+
+    exp_w = np.exp(w)
+
+    # 2. Sample n_neg songs from the noise model (u=0)
+    noise_ids = sample_noise_items(n_noise, H, exp_w, b, pos_ids)
+
+    # 3. Compute and normalize the bigram transition weights
+    bigram_weights = np.asarray([H[s].multiply(H[t]).multiply(exp_w) for (s, t) in bigrams])
+    bigram_weights /= np.sum(bigram_weights, axis=1)
+
+    # 4. Compute the importance weights for noise samples
+    noise_weights = [bigram_weights * H[id].T for id in noise_ids]
+
+    # 5. Construct the inputs to the solver
+    y = np.ones(len(pos_ids) + len(noise_ids))
+    y[len(pos_ids):] = -1
+
+    weights = np.ones_like(y)
+    weights[len(pos_ids):] = noise_weights
+
+    ids = np.concatenate([pos_ids, noise_ids])
+
+    return user_optimize_objective(reg, v[:, ids], b[ids], y, weights, u0=u0)
+
+
+def user_optimize_objective(reg, v, b, y, omega, u0=None):
+    '''Optimize a user vector from a sample of positive and noise items
+
+    :parameters:
+        - reg : float >= 0
+          Regularization penalty
+
+        - v : ndarray, shape=(d, m)
+          Latent factor representations for items
+
+        - b : ndarray, shape=(m,)
+          Bias terms for items
+
+        - y : ndarray, shape=(m,)
+          Sign matrix for items (+1 = positive association, -1 = negative)
+
+        - omega : ndarray, shape=(m,)
+          Importance weights for items
+
+        - u0 : None or ndarray, shape=(d,)
+          Initial value for the user vector
+
+    :returns:
+        - u_opt : ndarray, shape=(d,)
+          Optimal user vector
+    '''
+
+    def __user_obj(u):
+        '''Optimize the user objective function:
+
+        min_u reg * ||u||^2 + sum_i y[i] * omega[i] * log(1 + exp(-y * u'v[i] + b[i]))
+
+        '''
+
+        # Compute the scores
+        scores = y * (u.dot(v) + b)
+    
+        f = reg * 0.5 * np.sum(u**2) + omega.dot(np.logaddexp(0, -scores))
+        
+        grad = reg * u - v.dot(y * omega / (1.0 + np.exp(scores)))
+    
+        return f, grad
+
+    assert v.shape[1] == len(b)
+    assert v.shape[1] == len(y)
+    assert v.shape[1] == len(omega)
+
+    if not u0:
+        u0 = np.zeros(len(v))
+
+    u_opt, value, diagnostic = scipy.optimize.fmin_l_bfgs_b(__user_obj, u0)
+
+    assert diagnostic['warnflag'] == 0
+
+    return u_opt
