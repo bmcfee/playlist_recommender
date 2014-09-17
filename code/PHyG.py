@@ -95,13 +95,10 @@ class PlaylistModel(BaseEstimator):
 
     def _fit_users(self, bigrams, iter=None):
         # Solve over all users in parallel
-        self.u_[:] = np.asarray(Parallel(n_jobs=self.n_jobs)(delayed(user_optimize)(self.n_neg,
-                                                                                    self.H_,
-                                                                                    self.w_,
-                                                                                    self.user_reg,
-                                                                                    self.v_,
-                                                                                    self.b_,
-                                                                                    y) for y in bigrams))
+        self.u_[:] = Parallel(n_jobs=self.n_jobs)(delayed(user_optimize)(self.n_neg,
+                                                                         self.H_, self.w_,
+                                                                         self.user_reg, self.v_,
+                                                                         self.b_, y) for y in bigrams)
 
 
     def _fit_songs(self, iter=None):
@@ -128,15 +125,58 @@ class PlaylistModel(BaseEstimator):
           - H : scipy.sparse.csr_matrix (n_songs, n_edges)
         '''
 
-        # Stash the hypergraph
-        self.H_ = H
+        # Stash the hypergraph and its transpose
+        self.H_ = H.tocsr()
+        self.H_T_ = H.T.tocsr()
 
         # Convert playlists to bigrams
+        #   bigrams[user_id] = [(s,t) for all pairs (s,t) in playlists[user_id]]
 
         pass
 
 #-- Static methods: things that can parallelize
 
+def make_bigram_weights(H, s, t, weight):
+    if s == -1:
+        # This is a phantom state, so we only care about t
+        my_weight = H[t].multiply(weight)
+    else:
+        # Otherwise, (s,t) is a valid transition, so use both
+        my_weight = H[s].multiply(H[t]).multiply(weight)
+
+    # Normalize the edge probabilities
+    my_weight /= np.sum(my_weight)
+    return my_weight
+
+#--- edge optimization
+
+def edge_user_weights(H, H_T, u, v, b, bigrams):
+
+    # First, compute the user-item affinities
+    item_scores = v.dot(u) + b
+
+    # Now aggregate by edge
+    edge_scores = (H_T * item_scores)**(-1.0)
+
+
+    # num playlists is the number of bigrams where s == -1
+    num_playlists   = 0
+    num_usage       = np.zeros(len(item_scores))
+    Z = 0
+
+    # Now sum over bigrams
+    for s, t in bigrams:
+        Z = Z + make_bigram_weights(H, s, t, edge_scores)
+        if s == -1:
+            num_playlists += 1
+        else:
+            num_usage[s] += 1
+
+    return Z, num_usage, num_playlists
+
+
+
+#--- user optimization
 def sample_noise_items(n_neg, H, edge_dist, b, y_pos):
     '''Sample n_neg items from the noise distribution, forbidding observed samples y_pos.
 
@@ -177,18 +217,6 @@ def sample_noise_items(n_neg, H, edge_dist, b, y_pos):
         full_item_dist[new_item] = 0.0
 
     return noise_ids
-
-def make_bigram_weights(H, s, t, weight):
-    if s == -1:
-        # This is a phantom state, so we only care about t
-        my_weight = H[t].multiply(weight)
-    else:
-        # Otherwise, (s,t) is a valid transition, so use both
-        my_weight = H[s].multiply(H[t]).multiply(weight)
-
-    # Normalize the edge probabilities
-    my_weight /= np.sum(my_weight)
-    return my_weight
 
 def user_optimize(n_noise, H, w, reg, v, b, bigrams, u0=None):
     '''Optimize a user's latent factor representation
@@ -241,13 +269,13 @@ def user_optimize(n_noise, H, w, reg, v, b, bigrams, u0=None):
 
     # The first bunch are positive examples, and get weight=+1
     weights = np.ones_like(y)
+
     # The remaining examples get noise weights
     weights[len(pos_ids):] = noise_weights
 
     ids = np.concatenate([pos_ids, noise_ids])
 
     return user_optimize_objective(reg, v[ids], b[ids], y, weights, u0=u0)
-
 
 def user_optimize_objective(reg, v, b, y, omega, u0=None):
     '''Optimize a user vector from a sample of positive and noise items
