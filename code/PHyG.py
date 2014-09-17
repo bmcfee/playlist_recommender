@@ -104,7 +104,6 @@ class PlaylistModel(BaseEstimator):
                                                                                     y) for y in bigrams))
 
 
-
     def _fit_songs(self, iter=None):
 
         pass
@@ -179,6 +178,18 @@ def sample_noise_items(n_neg, H, edge_dist, b, y_pos):
 
     return noise_ids
 
+def make_bigram_weights(H, s, t, weight):
+    if s == -1:
+        # This is a phantom state, so we only care about t
+        my_weight = H[t].multiply(weight)
+    else:
+        # Otherwise, (s,t) is a valid transition, so use both
+        my_weight = H[s].multiply(H[t]).multiply(weight)
+
+    # Normalize the edge probabilities
+    my_weight /= np.sum(my_weight)
+    return my_weight
+
 def user_optimize(n_noise, H, w, reg, v, b, bigrams, u0=None):
     '''Optimize a user's latent factor representation
 
@@ -218,19 +229,8 @@ def user_optimize(n_noise, H, w, reg, v, b, bigrams, u0=None):
 
     # 3. Compute and normalize the bigram transition weights
     #   handle the special case of s==-1 here
-    def __make_bigram_weights(s, t):
-        if s == -1:
-            # This is a phantom state, so we only care about t
-            my_weight = H[t].multiply(exp_w)
-        else:
-            # Otherwise, (s,t) is a valid transition, so use both
-            my_weight = H[s].multiply(H[t]).multiply(exp_w)
 
-        # Normalize the edge probabilities
-        my_weight /= np.sum(my_weight)
-        return my_weight
-
-    bigram_weights = np.asarray([__make_bigram_weights(s, t) for (s, t) in bigrams])
+    bigram_weights = np.asarray([make_bigram_weights(H, s, t, exp_w) for (s, t) in bigrams])
 
     # 4. Compute the importance weights for noise samples
     noise_weights = [bigram_weights * H[id].T for id in noise_ids]
@@ -293,9 +293,9 @@ def user_optimize_objective(reg, v, b, y, omega, u0=None):
         return f, grad
 
     # Make sure our data is properly shaped
-    assert v.shape[0] == len(b)
-    assert v.shape[0] == len(y)
-    assert v.shape[0] == len(omega)
+    assert len(v) == len(b)
+    assert len(v) == len(y)
+    assert len(v) == len(omega)
 
     if not u0:
         u0 = np.zeros(len(v))
