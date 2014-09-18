@@ -4,10 +4,13 @@
 import numpy as np
 import scipy.sparse
 import scipy.optimize
+import scipy.misc
 
 from joblib import Parallel, delayed
 
 from sklearn.base import BaseEstimator
+
+__EXP_BOUND = 80.0
 
 class PlaylistModel(BaseEstimator):
 
@@ -111,9 +114,67 @@ class PlaylistModel(BaseEstimator):
         pass
 
 
-    def _fit_edges(self, iter=None):
+    def _fit_edges(self, bigrams, w0=None, iter=None):
+        # Scatter-gather the bigram statistics over all users
 
-        pass
+        # The edge weights
+        Z = 0
+
+        # num_usage[s] counts bigrams of the form (s, .)
+        num_usage = 0
+
+        # num_playlists counts all playlists
+        num_playlists = 0
+
+        for Z_i, nu_i, np_i in Parallel(n_jobs=self.n_jobs)(delayed(edge_user_weights)(self.H_, 
+                                                                          self.H_T_, 
+                                                                          self.u_, 
+                                                                          idx, 
+                                                                          self.v_, 
+                                                                          self.b_, y) for (idx, y) in enumerate(bigrams)):
+            Z += Z_i
+            num_usage += nu_i
+            num_playlists += np_i
+
+        Z = np.asarray(Z.todense()).ravel()
+        num_usage = np.asarray(num_usage.todense()).ravel()
+
+        def __edge_objective(w):
+            
+            obj_reg = self.edge_reg * 0.5 * np.sum(w**2)
+            grad_reg = self.edge_reg * w
+
+            obj_lin = - Z.dot(w)
+            grad_lin = -Z
+
+            lse_w = scipy.misc.logsumexp(w)
+            exp_w = np.exp(w)
+            Hexpw = self.H_.multiply(exp_w)
+
+            # Compute stable item-wise log-sum-exp slices
+            Hexpw_norm = np.empty_like(num_usage)
+            Hexpw_norm[:] = [scipy.misc.logsumexp(w[hid.indices]) for hid in self.H_]
+
+            obj_freq = num_usage.dot(Hexpw_norm) + num_playlists * lse_w
+
+            grad_freq = np.ravel( (num_usage * np.exp(-Hexpw_norm)).dot(Hexpw))
+            grad_freq += exp_w * (num_playlists * np.exp(-lse_w))
+
+            return obj_reg + obj_lin + obj_freq, grad_reg + grad_lin + grad_freq
+
+
+        if not w0:
+            w0 = np.zeros(self.H_.shape[0])
+
+        bounds = [(-__EXP_BOUND, __EXP_BOUND)] * len(w0)
+        w_opt, value, diagnostic = scipy.optimize.fmin_l_bfgs_b(__edge_objective, 
+                                                                w0, 
+                                                                bounds=bounds)
+
+        # Ensure that convergence happened correctly
+        assert diagnostic['warnflag'] == 0
+
+        self.w_ = w_opt
 
 
     def fit(self, playlists, H):
@@ -150,18 +211,18 @@ def make_bigram_weights(H, s, t, weight):
 
 #--- edge optimization
 
-def edge_user_weights(H, H_T, u, v, b, bigrams):
+def edge_user_weights(H, H_T, u, idx, v, b, bigrams):
+    '''Compute the edge weights and transition statistics for a user.'''
 
     # First, compute the user-item affinities
-    item_scores = v.dot(u) + b
+    item_scores = v.dot(u[idx]) + b
 
     # Now aggregate by edge
     edge_scores = (H_T * item_scores)**(-1.0)
 
-
     # num playlists is the number of bigrams where s == -1
     num_playlists   = 0
-    num_usage       = np.zeros(len(item_scores))
+    num_usage       = np.zeros(len(b))
     Z = 0
 
     # Now sum over bigrams
@@ -277,6 +338,9 @@ def user_optimize(n_noise, H, w, reg, v, b, bigrams, u0=None):
 
     return user_optimize_objective(reg, v[ids], b[ids], y, weights, u0=u0)
 
+# TODO:   2014-09-18 10:46:30 by Brian McFee <brian.mcfee@nyu.edu>
+#  refactor this to support item and bias optimization
+#   include an additional parameter for the regularization term/lagrangian matrix
 def user_optimize_objective(reg, v, b, y, omega, u0=None):
     '''Optimize a user vector from a sample of positive and noise items
 
