@@ -209,8 +209,8 @@ def make_bigram_weights(H, s, t, weight):
         my_weight = H[s].multiply(H[t]).multiply(weight)
 
     # Normalize the edge probabilities
-    my_weight /= np.sum(my_weight)
-    return np.ravel(my_weight)
+    my_weight /= my_weight.sum()
+    return my_weight
 
 def sample_noise_items(n_neg, H, edge_dist, b, y_pos):
     '''Sample n_neg items from the noise distribution, forbidding observed samples y_pos.
@@ -219,7 +219,7 @@ def sample_noise_items(n_neg, H, edge_dist, b, y_pos):
 
     y_forbidden = set(y_pos)
 
-    edge_dist = edge_dist / np.sum(edge_dist)
+    edge_dist = np.asarray(edge_dist / edge_dist.sum())
 
     full_item_dist = np.exp(b)
 
@@ -272,10 +272,10 @@ def generate_user_instance(n_neg, H, edge_dist, b, bigrams):
     # 1. Extract positive ids
     pos_ids = [t for (s, t) in bigrams]
 
-    exp_w = np.exp(edge_dist)
+    exp_w = scipy.sparse.lil_matrix(np.exp(edge_dist))
 
     # 2. Sample n_neg songs from the noise model (u=0)
-    noise_ids = sample_noise_items(n_neg, H, exp_w, b, pos_ids)
+    noise_ids = sample_noise_items(n_neg, H, np.ravel(exp_w.todense()), b, pos_ids)
 
     # 3. Compute and normalize the bigram transition weights
     #   handle the special case of s==None here
@@ -283,7 +283,7 @@ def generate_user_instance(n_neg, H, edge_dist, b, bigrams):
     bigram_weights = np.asarray([make_bigram_weights(H, s, t, exp_w) for (s, t) in bigrams])
 
     # 4. Compute the importance weights for noise samples
-    noise_weights = np.sum(np.asarray([H[id] * bigram_weights.T for id in noise_ids]).ravel(), axis=-1)
+    noise_weights = np.sum(np.asarray([[(H[id] * bg.T).todense() for id in noise_ids] for bg in bigram_weights]), axis=0).ravel()
 
     # 5. Construct the inputs to the solver
     y = np.ones(len(pos_ids) + len(noise_ids))
