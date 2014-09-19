@@ -115,7 +115,7 @@ class PlaylistModel(BaseEstimator):
 
 
     def _fit_edges(self, bigrams, w0=None, iter=None):
-        # Scatter-gather the bigram statistics over all users
+        '''Update the edge weights'''
 
         # The edge weights
         Z = 0
@@ -126,6 +126,7 @@ class PlaylistModel(BaseEstimator):
         # num_playlists counts all playlists
         num_playlists = 0
 
+        # Scatter-gather the bigram statistics over all users
         for Z_i, nu_i, np_i in Parallel(n_jobs=self.n_jobs)(delayed(edge_user_weights)(self.H_, 
                                                                           self.H_T_, 
                                                                           self.u_, 
@@ -197,6 +198,8 @@ class PlaylistModel(BaseEstimator):
 
 #-- Static methods: things that can parallelize
 
+#--- common functions to user, item, and bias optimization:
+
 def make_bigram_weights(H, s, t, weight):
     if s is None:
         # This is a phantom state, so we only care about t
@@ -207,7 +210,94 @@ def make_bigram_weights(H, s, t, weight):
 
     # Normalize the edge probabilities
     my_weight /= np.sum(my_weight)
-    return my_weight
+    return np.ravel(my_weight)
+
+def sample_noise_items(n_neg, H, edge_dist, b, y_pos):
+    '''Sample n_neg items from the noise distribution, forbidding observed samples y_pos.
+
+    '''
+
+    y_forbidden = set(y_pos)
+
+    edge_dist = edge_dist / np.sum(edge_dist)
+
+    full_item_dist = np.exp(b)
+
+    # Knock out forbidden items
+    full_item_dist[list(y_forbidden)] = 0.0
+
+    noise_ids = []
+
+    while len(noise_ids) < n_neg:
+        # Sample an edge
+        edge_id = np.flatnonzero(np.random.multinomial(1, edge_dist))[0]
+
+        item_dist = np.ravel(H[:, edge_id].T.multiply(full_item_dist))
+
+        item_dist_norm = np.sum(item_dist)
+
+        if not item_dist_norm:
+            continue
+
+        item_dist /= item_dist_norm
+
+        while True:
+            new_item = np.flatnonzero(np.random.multinomial(1, item_dist))[0]
+
+            if new_item not in y_forbidden:
+                break
+
+        y_forbidden.add(new_item)
+        noise_ids.append(new_item)
+        full_item_dist[new_item] = 0.0
+
+    return noise_ids
+
+def generate_user_instance(n_neg, H, edge_dist, b, bigrams):
+    '''Generate a subproblem instance.
+
+    Inputs:
+        - n_neg : # of negative samples
+        - H : hypergraph incidence matrix
+        - edge_dist : weights of the edges of H
+        - b : bias factors for items
+        - bigrams : list of tuples (s, t) for the user
+
+    Outputs:
+        - y : +-1 label vector
+        - weights : importance weights, shape=y.shape
+        - ids : list of indices for the sampled points, shape=y.shape
+    '''
+
+    # 1. Extract positive ids
+    pos_ids = [t for (s, t) in bigrams]
+
+    exp_w = np.exp(edge_dist)
+
+    # 2. Sample n_neg songs from the noise model (u=0)
+    noise_ids = sample_noise_items(n_neg, H, exp_w, b, pos_ids)
+
+    # 3. Compute and normalize the bigram transition weights
+    #   handle the special case of s==None here
+
+    bigram_weights = np.asarray([make_bigram_weights(H, s, t, exp_w) for (s, t) in bigrams])
+
+    # 4. Compute the importance weights for noise samples
+    noise_weights = np.sum(np.asarray([H[id] * bigram_weights.T for id in noise_ids]).ravel(), axis=-1)
+
+    # 5. Construct the inputs to the solver
+    y = np.ones(len(pos_ids) + len(noise_ids))
+    y[len(pos_ids):] = -1
+
+    # The first bunch are positive examples, and get weight=+1
+    weights = np.ones_like(y)
+
+    # The remaining examples get noise weights
+    weights[len(pos_ids):] = noise_weights
+
+    ids = np.concatenate([pos_ids, noise_ids])
+
+    return y, weights, ids
 
 #--- edge optimization
 
@@ -236,47 +326,6 @@ def edge_user_weights(H, H_T, u, idx, v, b, bigrams):
     return Z, num_usage, num_playlists
 
 #--- user optimization
-def sample_noise_items(n_neg, H, edge_dist, b, y_pos):
-    '''Sample n_neg items from the noise distribution, forbidding observed samples y_pos.
-
-    '''
-
-    y_forbidden = set(y_pos)
-
-    edge_dist = edge_dist / np.sum(edge_dist)
-
-    full_item_dist = np.exp(b)
-
-    # Knock out forbidden items
-    full_item_dist[list(y_forbidden)] = 0.0
-
-    noise_ids = []
-
-    while len(noise_ids) < n_neg:
-        # Sample an edge
-        edge_id = np.flatnonzero(np.random.multinomial(1, edge_dist))
-
-        item_dist = H[edge_id] * full_item_dist
-
-        item_dist_norm = np.sum(item_dist)
-
-        if not item_dist_norm:
-            continue
-
-        item_dist /= item_dist_norm
-
-        while True:
-            new_item = np.flatnonzero(np.random.multinomial(1, item_dist))
-
-            if new_item not in y_forbidden:
-                break
-
-        y_forbidden.add(new_item)
-        noise_ids.append(new_item)
-        full_item_dist[new_item] = 0.0
-
-    return noise_ids
-
 def user_optimize(n_noise, H, w, reg, v, b, bigrams, u0=None):
     '''Optimize a user's latent factor representation
 
@@ -306,35 +355,9 @@ def user_optimize(n_noise, H, w, reg, v, b, bigrams, u0=None):
           Optional initial value for u
     '''
 
-    # 1. Extract positive ids
-    pos_ids = [t for (s, t) in bigrams]
+    y, weights, ids = generate_user_instance(n_noise, H, w, b, bigrams)
 
-    exp_w = np.exp(w)
-
-    # 2. Sample n_neg songs from the noise model (u=0)
-    noise_ids = sample_noise_items(n_noise, H, exp_w, b, pos_ids)
-
-    # 3. Compute and normalize the bigram transition weights
-    #   handle the special case of s==None here
-
-    bigram_weights = np.asarray([make_bigram_weights(H, s, t, exp_w) for (s, t) in bigrams])
-
-    # 4. Compute the importance weights for noise samples
-    noise_weights = [bigram_weights * H[id].T for id in noise_ids]
-
-    # 5. Construct the inputs to the solver
-    y = np.ones(len(pos_ids) + len(noise_ids))
-    y[len(pos_ids):] = -1
-
-    # The first bunch are positive examples, and get weight=+1
-    weights = np.ones_like(y)
-
-    # The remaining examples get noise weights
-    weights[len(pos_ids):] = noise_weights
-
-    ids = np.concatenate([pos_ids, noise_ids])
-
-    return user_optimize_objective(reg, v[ids], b[ids], y, weights, u0=u0)
+    return user_optimize_objective(reg, np.take(v, ids, axis=0), np.take(b, ids), y, weights, u0=u0)
 
 # TODO:   2014-09-18 10:46:30 by Brian McFee <brian.mcfee@nyu.edu>
 #  refactor this to support item and bias optimization
@@ -376,9 +399,11 @@ def user_optimize_objective(reg, v, b, y, omega, u0=None):
         # Compute the scores
         scores = y * (v.dot(u) + b)
     
-        f = reg * 0.5 * np.sum(u**2) + omega.dot(np.logaddexp(0, -scores))
+        f = reg * 0.5 * np.sum(u**2) 
+        f += omega.dot(np.logaddexp(0, -scores))
         
-        grad = reg * u - v.T.dot(y * omega / (1.0 + np.exp(scores)))
+        grad = reg * u 
+        grad -= v.T.dot(y * omega / (1.0 + np.exp(scores)))
     
         return f, grad
 
