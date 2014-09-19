@@ -141,11 +141,11 @@ class PlaylistModel(BaseEstimator):
 
         def __edge_objective(w):
             
-            obj_reg = self.edge_reg * 0.5 * np.sum(w**2)
-            grad_reg = self.edge_reg * w
+            obj = self.edge_reg * 0.5 * np.sum(w**2)
+            grad = self.edge_reg * w
 
-            obj_lin = - Z.dot(w)
-            grad_lin = -Z
+            obj += - Z.dot(w)
+            grad += -Z
 
             lse_w = scipy.misc.logsumexp(w)
             exp_w = np.exp(w)
@@ -153,14 +153,14 @@ class PlaylistModel(BaseEstimator):
 
             # Compute stable item-wise log-sum-exp slices
             Hexpw_norm = np.empty_like(num_usage)
-            Hexpw_norm[:] = [scipy.misc.logsumexp(w[hid.indices]) for hid in self.H_]
+            Hexpw_norm[:] = [scipy.misc.logsumexp(np.take(w, hid.indices)) for hid in self.H_]
 
-            obj_freq = num_usage.dot(Hexpw_norm) + num_playlists * lse_w
+            obj += num_usage.dot(Hexpw_norm) + num_playlists * lse_w
 
-            grad_freq = np.ravel( (num_usage * np.exp(-Hexpw_norm)).dot(Hexpw))
-            grad_freq += exp_w * (num_playlists * np.exp(-lse_w))
+            grad += np.ravel( (num_usage * np.exp(-Hexpw_norm)).dot(Hexpw))
+            grad += exp_w * (num_playlists * np.exp(-lse_w))
 
-            return obj_reg + obj_lin + obj_freq, grad_reg + grad_lin + grad_freq
+            return obj, grad
 
 
         if not w0:
@@ -198,7 +198,7 @@ class PlaylistModel(BaseEstimator):
 #-- Static methods: things that can parallelize
 
 def make_bigram_weights(H, s, t, weight):
-    if s == -1:
+    if s is None:
         # This is a phantom state, so we only care about t
         my_weight = H[t].multiply(weight)
     else:
@@ -220,7 +220,7 @@ def edge_user_weights(H, H_T, u, idx, v, b, bigrams):
     # Now aggregate by edge
     edge_scores = (H_T * item_scores)**(-1.0)
 
-    # num playlists is the number of bigrams where s == -1
+    # num playlists is the number of bigrams where s == None
     num_playlists   = 0
     num_usage       = np.zeros(len(b))
     Z = 0
@@ -228,14 +228,12 @@ def edge_user_weights(H, H_T, u, idx, v, b, bigrams):
     # Now sum over bigrams
     for s, t in bigrams:
         Z = Z + make_bigram_weights(H, s, t, edge_scores)
-        if s == -1:
+        if s is None:
             num_playlists += 1
         else:
             num_usage[s] += 1
 
     return Z, num_usage, num_playlists
-
-
 
 #--- user optimization
 def sample_noise_items(n_neg, H, edge_dist, b, y_pos):
@@ -317,7 +315,7 @@ def user_optimize(n_noise, H, w, reg, v, b, bigrams, u0=None):
     noise_ids = sample_noise_items(n_noise, H, exp_w, b, pos_ids)
 
     # 3. Compute and normalize the bigram transition weights
-    #   handle the special case of s==-1 here
+    #   handle the special case of s==None here
 
     bigram_weights = np.asarray([make_bigram_weights(H, s, t, exp_w) for (s, t) in bigrams])
 
