@@ -221,6 +221,7 @@ def sample_noise_items(n_neg, H, edge_dist, b, y_pos):
 
     edge_dist = np.asarray(edge_dist / edge_dist.sum())
 
+    # Our item distribution will be softmax over bias, ignoring the user factor
     full_item_dist = np.exp(b)
 
     # Knock out forbidden items
@@ -353,6 +354,10 @@ def user_optimize(n_noise, H, w, reg, v, b, bigrams, u0=None):
 
         - u0 : None or ndarray, shape=(n_factors,)
           Optional initial value for u
+
+    :returns:
+        - u_opt : ndarray, shape=(n_factors,)
+          Optimal user vector
     '''
 
     y, weights, ids = generate_user_instance(n_noise, H, w, b, bigrams)
@@ -413,7 +418,7 @@ def user_optimize_objective(reg, v, b, y, omega, u0=None):
     assert len(v) == len(omega)
 
     if not u0:
-        u0 = np.zeros(len(v))
+        u0 = np.zeros(v.shape[-1])
 
     u_opt, value, diagnostic = scipy.optimize.fmin_l_bfgs_b(__user_obj, u0)
 
