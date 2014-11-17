@@ -18,6 +18,7 @@ class PlaylistModel(BaseEstimator):
     def __init__(self, n_factors=8, edge_reg=1.0, bias_reg=1.0, user_reg=1.0,
                  song_reg=1.0, max_iter=10, edge_init=None, bias_init=None,
                  user_init=None, song_init=None, params='ebus', n_neg=64,
+                 max_admm_iter=50,
                  n_jobs=1,
                  memory=None):
         """Initialize a personalized playlist model
@@ -63,6 +64,10 @@ class PlaylistModel(BaseEstimator):
          - n_neg : int > 0
             Number of negative examples to draw for each user sub-problem.
 
+         - max_admm_iter : int > 0
+            Maximum number of ADMM iterations to run in the inner loop.
+            Set to np.inf for full convergence tests.
+
          - n_jobs : int
             Maximum number of jobs to run in parallel
 
@@ -100,15 +105,103 @@ class PlaylistModel(BaseEstimator):
     def _fit_users(self, bigrams, iter=None):
         # Solve over all users in parallel
         self.u_[:] = Parallel(n_jobs=self.n_jobs)(delayed(user_optimize)(self.n_neg,
-                                                                         self.H_, self.w_,
-                                                                         self.user_reg, self.v_,
-                                                                         self.b_, y)
+                                                                         self.H_,
+                                                                         self.w_,
+                                                                         self.user_reg,
+                                                                         self.v_,
+                                                                         self.b_,
+                                                                         y)
                                                   for y in bigrams)
 
+    def _fit_songs(self, bigrams, iter=None):
 
-    def _fit_songs(self, iter=None):
+        # 1. generate noise instances:
+        #   for each user subproblem, we need:
+        #       y[i]        # pos/neg labels for each of ids_i
+        #       weights[i]  # importance weights for each of ids_i
+        #       ids[i]      # indices of items for this subproblem
+        #
 
-        pass
+        n_songs = len(self.H_)
+
+        subproblems = Parallel(n_jobs=self.n_jobs)(delayed(generate_user_instance)(self.n_neg,
+                                                                                   self.H_,
+                                                                                   self.w_, 
+                                                                                   self.b_,
+                                                                                   y)
+                                                   for y in bigrams)
+
+        # 2. collect usage statistics over subproblems
+        #       Z[i] = count subproblems using item i
+        #
+
+        counts = np.zeros_like(n_songs)
+        duals  = []
+
+        for sp in subproblems:
+            ids_i = sp[-1]
+            counts[ids_i] += 1.0
+            duals.append(np.zeros((len(ids_i), self.n_factors)))
+
+        # 3. initialize ADMM parameters
+        #   a. V <- self.v_
+        #   b. Lambda[i] = np.zeros( (len(ids_i), self.n_factors) )
+        #   c. rho = rho_init
+        #
+
+        V = self.v_.copy()
+
+        rho = 1.0
+
+        # 4. ADMM loop
+        #   a. [parallel] solve each user problem: 
+        #           (i, S[i], y[i], weights[i], Lambda[i], rho, U, V, b)
+        #
+        #           equivalently, pass ids, so that 
+        #               S*V == V[ids] == np.take(V, ids, axis=0)
+        #           this buys about a 4x speedup
+        #
+        #           (i, y[i], weights[i], ids, Lambda[i], rho, U, V, b)
+        #
+
+        for step in range(self.max_iter_admm):
+            Ai = Parallel(n_jobs=self.n_jobs)(delayed(item_factor_optimize)(i,
+                                                                            subproblems[i][0],
+                                                                            subproblems[i][1],
+                                                                            subproblems[i][2],
+                                                                            duals[i],
+                                                                            rho,
+                                                                            self.u_,
+                                                                            V,
+                                                                            self.b_)
+                                              for i in range(len(subproblems)))
+
+            # Kill the old V
+            V.fill(0.0)
+            for sp_i, a_i, d_i in zip(subproblems, Ai, duals):
+                ids_i = sp_i[-1]
+                V[ids_i, :] += (a_i + d_i)
+
+            # Compute the normalization factor
+            my_norm = (counts + self.song_reg / rho)**(-1.0)
+
+            # Broadcast the normalization 
+            V[:] = my_norm * V
+            
+            # Update the residual
+            for sp_i, a_i, d_i in zip(subproblems, Ai, duals):
+                ids_i = sp_i[-1]
+                d_i[:] = d_i + a_i - np.take(V, ids_i, axis=0)
+
+            pass
+        #           passing index and full U matrix also allows us to 
+        #           share memory across threads rather than copying each factor
+        #
+        #   b. average results + prior
+        #   c. update residual
+        #   d. test for convergence, update rho
+
+        self.v_[:] = V
 
     def _fit_bias(self, iter=None):
 
@@ -311,6 +404,18 @@ def generate_user_instance(n_neg, H, edge_dist, b, bigrams):
     return y, weights, ids
 
 
+# make a slicing matrix from a set of ids
+def make_slice(n_total, ids, dtype=np.uint16):
+    '''Make a sparse (coo) row-slicing matrix from a set of ids.'''
+
+    # S is k-by-n so that A ~= SV
+    k = len(ids)
+    data = np.ones(k, dtype=dtype)
+
+    return scipy.sparse.coo_matrix((data, (range(k), ids)),
+                                   shape=(k, n_total))
+
+
 # edge optimization
 def edge_user_weights(H, H_T, u, idx, v, b, bigrams):
     '''Compute the edge weights and transition statistics for a user.'''
@@ -335,6 +440,50 @@ def edge_user_weights(H, H_T, u, idx, v, b, bigrams):
             num_usage[s] += 1
 
     return Z, num_usage, num_playlists
+
+
+# item optimization
+def item_factor_optimize(i, y, weights, ids, dual, rho, U_, V_, b_, a0=None):
+
+    # Slice out the relevant components of this subproblem
+    u = U_[i]
+    V = np.take(V_, ids, axis=0)
+    b = np.take(b_, ids, axis=0)
+
+    # Compute the residual
+    Z = V - dual
+
+    def __item_obj(_a):
+        '''Optimize the item objective function'''
+
+        A = _a.reshape(V.shape)
+        scores = y * (A.dot(u) + b)
+
+        delta = A - Z
+        f = rho * 0.5 * np.sum(delta**2)
+        f += weights.dot(np.logaddexp(0, -scores))
+
+        grad = rho * delta
+        grad += np.multiply.outer(-y * weights / (1.0 + np.exp(scores)), u)
+
+        return f, np.ravel(grad)
+
+    # Make sure our data is properly shaped
+    assert len(V) == len(b)
+    assert len(V) == len(y)
+    assert len(V) == len(weights)
+
+    if not a0:
+        a0 = np.zeros_like(V)
+    else:
+        assert np.array_equal(a0.shape, V.shape)
+
+    a_opt, value, diagnostic = scipy.optimize.fmin_l_bfgs_b(__item_obj, a0)
+
+    # Ensure that convergence happened correctly
+    assert diagnostic['warnflag'] == 0
+
+    return a_opt
 
 
 # user optimization
@@ -437,6 +586,8 @@ def user_optimize_objective(reg, v, b, y, omega, u0=None):
 
     if not u0:
         u0 = np.zeros(v.shape[-1])
+    else:
+        assert len(u0) == v.shape[-1]
 
     u_opt, value, diagnostic = scipy.optimize.fmin_l_bfgs_b(__user_obj, u0)
 
