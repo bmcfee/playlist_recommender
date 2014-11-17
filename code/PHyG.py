@@ -126,7 +126,7 @@ class PlaylistModel(BaseEstimator):
 
         subproblems = Parallel(n_jobs=self.n_jobs)(delayed(generate_user_instance)(self.n_neg,
                                                                                    self.H_,
-                                                                                   self.w_, 
+                                                                                   self.w_,
                                                                                    self.b_,
                                                                                    y)
                                                    for y in bigrams)
@@ -136,12 +136,16 @@ class PlaylistModel(BaseEstimator):
         #
 
         counts = np.zeros_like(n_songs)
-        duals  = []
+        duals = []
+        Ai = []
+
+        V = self.v_.copy()
 
         for sp in subproblems:
             ids_i = sp[-1]
             counts[ids_i] += 1.0
             duals.append(np.zeros((len(ids_i), self.n_factors)))
+            Ai.append(np.take(V, ids_i, axis=0))
 
         # 3. initialize ADMM parameters
         #   a. V <- self.v_
@@ -149,15 +153,13 @@ class PlaylistModel(BaseEstimator):
         #   c. rho = rho_init
         #
 
-        V = self.v_.copy()
-
         rho = 1.0
 
         # 4. ADMM loop
-        #   a. [parallel] solve each user problem: 
+        #   a. [parallel] solve each user problem:
         #           (i, S[i], y[i], weights[i], Lambda[i], rho, U, V, b)
         #
-        #           equivalently, pass ids, so that 
+        #           equivalently, pass ids, so that
         #               S*V == V[ids] == np.take(V, ids, axis=0)
         #           this buys about a 4x speedup
         #
@@ -165,15 +167,16 @@ class PlaylistModel(BaseEstimator):
         #
 
         for step in range(self.max_iter_admm):
-            Ai = Parallel(n_jobs=self.n_jobs)(delayed(item_factor_optimize)(i,
-                                                                            subproblems[i][0],
-                                                                            subproblems[i][1],
-                                                                            subproblems[i][2],
-                                                                            duals[i],
-                                                                            rho,
-                                                                            self.u_,
-                                                                            V,
-                                                                            self.b_)
+            Parallel(n_jobs=self.n_jobs)(delayed(item_factor_optimize)(i,
+                                                                       subproblems[i][0],
+                                                                       subproblems[i][1],
+                                                                       subproblems[i][2],
+                                                                       duals[i],
+                                                                       rho,
+                                                                       self.u_,
+                                                                       V,
+                                                                       self.b_,
+                                                                       Aout=Ai[i])
                                               for i in range(len(subproblems)))
 
             # Kill the old V
@@ -185,16 +188,15 @@ class PlaylistModel(BaseEstimator):
             # Compute the normalization factor
             my_norm = (counts + self.song_reg / rho)**(-1.0)
 
-            # Broadcast the normalization 
+            # Broadcast the normalization
             V[:] = my_norm * V
-            
-            # Update the residual
+
+            # Update the residual*
             for sp_i, a_i, d_i in zip(subproblems, Ai, duals):
                 ids_i = sp_i[-1]
                 d_i[:] = d_i + a_i - np.take(V, ids_i, axis=0)
 
-            pass
-        #           passing index and full U matrix also allows us to 
+        #           passing index and full U matrix also allows us to
         #           share memory across threads rather than copying each factor
         #
         #   b. average results + prior
@@ -443,12 +445,13 @@ def edge_user_weights(H, H_T, u, idx, v, b, bigrams):
 
 
 # item optimization
-def item_factor_optimize(i, y, weights, ids, dual, rho, U_, V_, b_, a0=None):
+def item_factor_optimize(i, y, weights, ids, dual, rho, U_, V_, b_,
+                         Aout=None):
 
     # Slice out the relevant components of this subproblem
     u = U_[i]
     V = np.take(V_, ids, axis=0)
-    b = np.take(b_, ids, axis=0)
+    b = np.take(b_, ids)
 
     # Compute the residual
     Z = V - dual
@@ -456,7 +459,9 @@ def item_factor_optimize(i, y, weights, ids, dual, rho, U_, V_, b_, a0=None):
     def __item_obj(_a):
         '''Optimize the item objective function'''
 
-        A = _a.reshape(V.shape)
+        A = _a.view()
+        A.shape = Z.shape
+
         scores = y * (A.dot(u) + b)
 
         delta = A - Z
@@ -466,24 +471,39 @@ def item_factor_optimize(i, y, weights, ids, dual, rho, U_, V_, b_, a0=None):
         grad = rho * delta
         grad += np.multiply.outer(-y * weights / (1.0 + np.exp(scores)), u)
 
-        return f, np.ravel(grad)
+        grad_out = grad.view()
+        grad_out.shape = (grad.size, )
+
+        return f, grad_out
 
     # Make sure our data is properly shaped
     assert len(V) == len(b)
     assert len(V) == len(y)
     assert len(V) == len(weights)
 
-    if not a0:
-        a0 = np.zeros_like(V)
+    # Probably a decent initial point
+    if Aout is not None:
+        a0 = Aout
     else:
-        assert np.array_equal(a0.shape, V.shape)
+        # otherwise, V slice is pretty good too
+        a0 = V.copy()
 
     a_opt, value, diagnostic = scipy.optimize.fmin_l_bfgs_b(__item_obj, a0)
 
     # Ensure that convergence happened correctly
     assert diagnostic['warnflag'] == 0
 
-    return a_opt
+    # Reshape the solution
+    a_opt.shape = V.shape
+
+    # If we have a target destination, fill it
+    if Aout is not None:
+        Aout[:] = a_opt
+    else:
+        # Otherwise, point to the new array
+        Aout = a_opt
+
+    return Aout
 
 
 # user optimization
