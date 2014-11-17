@@ -12,11 +12,13 @@ from sklearn.base import BaseEstimator
 
 __EXP_BOUND = 80.0
 
+
 class PlaylistModel(BaseEstimator):
 
-    def __init__(self, n_factors=8, edge_reg=1.0, bias_reg=1.0, user_reg=1.0, 
-                 song_reg=1.0, max_iter=10, edge_init=None, bias_init=None, 
-                 user_init=None, song_init=None, params='ebus', n_neg=64, n_jobs=1, 
+    def __init__(self, n_factors=8, edge_reg=1.0, bias_reg=1.0, user_reg=1.0,
+                 song_reg=1.0, max_iter=10, edge_init=None, bias_init=None,
+                 user_init=None, song_init=None, params='ebus', n_neg=64,
+                 n_jobs=1,
                  memory=None):
         """Initialize a personalized playlist model
 
@@ -73,17 +75,17 @@ class PlaylistModel(BaseEstimator):
         if 'u' not in params or 'v' not in params:
             n_factors = 0
 
-        self.max_iter   = max_iter
-        self.params     = params
-        self.n_factors  = n_factors
-        self.n_neg      = n_neg
-        self.n_jobs     = n_jobs
+        self.max_iter = max_iter
+        self.params = params
+        self.n_factors = n_factors
+        self.n_neg = n_neg
+        self.n_jobs = n_jobs
 
-        self.w_         = edge_init
-        self.b_         = bias_init
-        self.u_         = user_init
-        self.v_         = song_init
-        
+        self.w_ = edge_init
+        self.b_ = bias_init
+        self.u_ = user_init
+        self.v_ = song_init
+
         self.edge_reg = edge_reg
         self.bias_reg = bias_reg
         self.user_reg = user_reg
@@ -95,24 +97,22 @@ class PlaylistModel(BaseEstimator):
         if song_init is not None:
             self.n_factors = song_init.shape[1]
 
-
     def _fit_users(self, bigrams, iter=None):
         # Solve over all users in parallel
         self.u_[:] = Parallel(n_jobs=self.n_jobs)(delayed(user_optimize)(self.n_neg,
                                                                          self.H_, self.w_,
                                                                          self.user_reg, self.v_,
-                                                                         self.b_, y) for y in bigrams)
+                                                                         self.b_, y)
+                                                  for y in bigrams)
 
 
     def _fit_songs(self, iter=None):
 
         pass
 
-
     def _fit_bias(self, iter=None):
 
         pass
-
 
     def _fit_edges(self, bigrams, w0=None, iter=None):
         '''Update the edge weights'''
@@ -127,12 +127,13 @@ class PlaylistModel(BaseEstimator):
         num_playlists = 0
 
         # Scatter-gather the bigram statistics over all users
-        for Z_i, nu_i, np_i in Parallel(n_jobs=self.n_jobs)(delayed(edge_user_weights)(self.H_, 
-                                                                          self.H_T_, 
-                                                                          self.u_, 
-                                                                          idx, 
-                                                                          self.v_, 
-                                                                          self.b_, y) for (idx, y) in enumerate(bigrams)):
+        for Z_i, nu_i, np_i in Parallel(n_jobs=self.n_jobs)(delayed(edge_user_weights)(self.H_,
+                                                                                       self.H_T_,
+                                                                                       self.u_,
+                                                                                       idx,
+                                                                                       self.v_,
+                                                                                       self.b_, y)
+                                                            for (idx, y) in enumerate(bigrams)):
             Z += Z_i
             num_usage += nu_i
             num_playlists += np_i
@@ -141,7 +142,7 @@ class PlaylistModel(BaseEstimator):
         num_usage = np.asarray(num_usage.todense()).ravel()
 
         def __edge_objective(w):
-            
+
             obj = self.edge_reg * 0.5 * np.sum(w**2)
             grad = self.edge_reg * w
 
@@ -154,36 +155,35 @@ class PlaylistModel(BaseEstimator):
 
             # Compute stable item-wise log-sum-exp slices
             Hexpw_norm = np.empty_like(num_usage)
-            Hexpw_norm[:] = [scipy.misc.logsumexp(np.take(w, hid.indices)) for hid in self.H_]
+            Hexpw_norm[:] = [scipy.misc.logsumexp(np.take(w, hid.indices))
+                             for hid in self.H_]
 
             obj += num_usage.dot(Hexpw_norm) + num_playlists * lse_w
 
-            grad += np.ravel( (num_usage * np.exp(-Hexpw_norm)).dot(Hexpw))
+            grad += np.ravel((num_usage * np.exp(-Hexpw_norm)).dot(Hexpw))
             grad += exp_w * (num_playlists * np.exp(-lse_w))
 
             return obj, grad
-
 
         if not w0:
             w0 = np.zeros(self.H_.shape[0])
 
         bounds = [(-__EXP_BOUND, __EXP_BOUND)] * len(w0)
-        w_opt, value, diagnostic = scipy.optimize.fmin_l_bfgs_b(__edge_objective, 
-                                                                w0, 
-                                                                bounds=bounds)
+        w_opt, value, diag = scipy.optimize.fmin_l_bfgs_b(__edge_objective,
+                                                          w0,
+                                                          bounds=bounds)
 
         # Ensure that convergence happened correctly
-        assert diagnostic['warnflag'] == 0
+        assert diag['warnflag'] == 0
 
         self.w_ = w_opt
-
 
     def fit(self, playlists, H):
         '''fit the model.
 
         :parameters:
           - playlists : dict (users => list of playlists)
-            
+
           - H : scipy.sparse.csr_matrix (n_songs, n_edges)
         '''
 
@@ -196,10 +196,10 @@ class PlaylistModel(BaseEstimator):
 
         pass
 
-#-- Static methods: things that can parallelize
+# Static methods: things that can parallelize
 
-#--- common functions to user, item, and bias optimization:
 
+# common functions to user, item, and bias optimization:
 def make_bigram_weights(H, s, t, weight):
     if s is None:
         # This is a phantom state, so we only care about t
@@ -212,9 +212,10 @@ def make_bigram_weights(H, s, t, weight):
     my_weight /= my_weight.sum()
     return my_weight
 
-def sample_noise_items(n_neg, H, edge_dist, b, y_pos):
-    '''Sample n_neg items from the noise distribution, forbidding observed samples y_pos.
 
+def sample_noise_items(n_neg, H, edge_dist, b, y_pos):
+    '''Sample n_neg items from the noise distribution,
+    forbidding observed samples y_pos.
     '''
 
     y_forbidden = set(y_pos)
@@ -254,6 +255,7 @@ def sample_noise_items(n_neg, H, edge_dist, b, y_pos):
 
     return noise_ids
 
+
 def generate_user_instance(n_neg, H, edge_dist, b, bigrams):
     '''Generate a subproblem instance.
 
@@ -276,15 +278,23 @@ def generate_user_instance(n_neg, H, edge_dist, b, bigrams):
     exp_w = scipy.sparse.lil_matrix(np.exp(edge_dist))
 
     # 2. Sample n_neg songs from the noise model (u=0)
-    noise_ids = sample_noise_items(n_neg, H, np.ravel(exp_w.todense()), b, pos_ids)
+    noise_ids = sample_noise_items(n_neg,
+                                   H,
+                                   np.ravel(exp_w.todense()),
+                                   b,
+                                   pos_ids)
 
     # 3. Compute and normalize the bigram transition weights
     #   handle the special case of s==None here
 
-    bigram_weights = np.asarray([make_bigram_weights(H, s, t, exp_w) for (s, t) in bigrams])
+    bigram_weights = np.asarray([make_bigram_weights(H, s, t, exp_w)
+                                 for (s, t) in bigrams])
 
     # 4. Compute the importance weights for noise samples
-    noise_weights = np.sum(np.asarray([[(H[id] * bg.T).todense() for id in noise_ids] for bg in bigram_weights]), axis=0).ravel()
+    noise_weights = np.sum(np.asarray([[(H[i] * bg.T).todense()
+                                        for i in noise_ids]
+                                       for bg in bigram_weights]),
+                           axis=0).ravel()
 
     # 5. Construct the inputs to the solver
     y = np.ones(len(pos_ids) + len(noise_ids))
@@ -300,8 +310,8 @@ def generate_user_instance(n_neg, H, edge_dist, b, bigrams):
 
     return y, weights, ids
 
-#--- edge optimization
 
+# edge optimization
 def edge_user_weights(H, H_T, u, idx, v, b, bigrams):
     '''Compute the edge weights and transition statistics for a user.'''
 
@@ -312,8 +322,8 @@ def edge_user_weights(H, H_T, u, idx, v, b, bigrams):
     edge_scores = (H_T * item_scores)**(-1.0)
 
     # num playlists is the number of bigrams where s == None
-    num_playlists   = 0
-    num_usage       = np.zeros(len(b))
+    num_playlists = 0
+    num_usage = np.zeros(len(b))
     Z = 0
 
     # Now sum over bigrams
@@ -326,7 +336,8 @@ def edge_user_weights(H, H_T, u, idx, v, b, bigrams):
 
     return Z, num_usage, num_playlists
 
-#--- user optimization
+
+# user optimization
 def user_optimize(n_noise, H, w, reg, v, b, bigrams, u0=None):
     '''Optimize a user's latent factor representation
 
@@ -362,11 +373,17 @@ def user_optimize(n_noise, H, w, reg, v, b, bigrams, u0=None):
 
     y, weights, ids = generate_user_instance(n_noise, H, w, b, bigrams)
 
-    return user_optimize_objective(reg, np.take(v, ids, axis=0), np.take(b, ids), y, weights, u0=u0)
+    return user_optimize_objective(reg,
+                                   np.take(v, ids, axis=0),
+                                   np.take(b, ids),
+                                   y,
+                                   weights,
+                                   u0=u0)
+
 
 # TODO:   2014-09-18 10:46:30 by Brian McFee <brian.mcfee@nyu.edu>
 #  refactor this to support item and bias optimization
-#   include an additional parameter for the regularization term/lagrangian matrix
+#  include an additional parameter for the regularization term/lagrangian
 def user_optimize_objective(reg, v, b, y, omega, u0=None):
     '''Optimize a user vector from a sample of positive and noise items
 
@@ -397,19 +414,20 @@ def user_optimize_objective(reg, v, b, y, omega, u0=None):
     def __user_obj(u):
         '''Optimize the user objective function:
 
-        min_u reg * ||u||^2 + sum_i y[i] * omega[i] * log(1 + exp(-y * u'v[i] + b[i]))
+            min_u reg * ||u||^2
+                + sum_i y[i] * omega[i] * log(1 + exp(-y * u'v[i] + b[i]))
 
         '''
 
         # Compute the scores
         scores = y * (v.dot(u) + b)
-    
-        f = reg * 0.5 * np.sum(u**2) 
+
+        f = reg * 0.5 * np.sum(u**2)
         f += omega.dot(np.logaddexp(0, -scores))
-        
-        grad = reg * u 
+
+        grad = reg * u
         grad -= v.T.dot(y * omega / (1.0 + np.exp(scores)))
-    
+
         return f, grad
 
     # Make sure our data is properly shaped
