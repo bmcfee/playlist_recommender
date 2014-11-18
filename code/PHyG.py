@@ -167,16 +167,16 @@ class PlaylistModel(BaseEstimator):
         #
 
         for step in range(self.max_iter_admm):
-            Parallel(n_jobs=self.n_jobs)(delayed(item_factor_optimize)(i,
-                                                                       subproblems[i][0],
-                                                                       subproblems[i][1],
-                                                                       subproblems[i][2],
-                                                                       duals[i],
-                                                                       rho,
-                                                                       self.u_,
-                                                                       V,
-                                                                       self.b_,
-                                                                       Aout=Ai[i])
+            Ai = Parallel(n_jobs=self.n_jobs)(delayed(item_factor_optimize)(i,
+                                                                            subproblems[i][0],
+                                                                            subproblems[i][1],
+                                                                            subproblems[i][2],
+                                                                            duals[i],
+                                                                            rho,
+                                                                            self.u_,
+                                                                            V,
+                                                                            self.b_,
+                                                                            Aout=Ai[i])
                                               for i in range(len(subproblems)))
 
             # Kill the old V
@@ -195,13 +195,6 @@ class PlaylistModel(BaseEstimator):
             for sp_i, a_i, d_i in zip(subproblems, Ai, duals):
                 ids_i = sp_i[-1]
                 d_i[:] = d_i + a_i - np.take(V, ids_i, axis=0)
-
-        #           passing index and full U matrix also allows us to
-        #           share memory across threads rather than copying each factor
-        #
-        #   b. average results + prior
-        #   c. update residual
-        #   d. test for convergence, update rho
 
         self.v_[:] = V
 
