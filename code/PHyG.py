@@ -429,7 +429,7 @@ def generate_user_instance(n_neg, H, edge_dist, bigrams, b=None,
     '''
 
     if None not in (user_id, U, V):
-        item_scores = U[user_id].dot(V)
+        item_scores = V.dot(U[user_id])
     else:
         item_scores = b
 
