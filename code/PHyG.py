@@ -195,7 +195,6 @@ class PlaylistModel(BaseEstimator):
 
         return playlist, edges
 
-
     def _fit_songs(self, bigrams):
 
         # 1. generate noise instances:
@@ -522,6 +521,7 @@ class PlaylistModel(BaseEstimator):
         L.info('Done.')
 
 
+# Static methods: things that can parallelize
 def make_bigrams(playlists):
     '''generate user map and bigram lists.
 
@@ -551,7 +551,6 @@ def make_bigrams(playlists):
     return user_map, bigrams
 
 
-# Static methods: things that can parallelize
 def categorical(z):
     '''Sample from a categorical random variable'''
 
@@ -686,18 +685,6 @@ def generate_user_instance(n_neg, H, edge_dist, bigrams, b=None,
     ids = np.concatenate([pos_ids, noise_ids])
 
     return y, weights, ids
-
-
-# make a slicing matrix from a set of ids
-def make_slice(n_total, ids, dtype=np.uint16):
-    '''Make a sparse (coo) row-slicing matrix from a set of ids.'''
-
-    # S is k-by-n so that A ~= SV
-    k = len(ids)
-    data = np.ones(k, dtype=dtype)
-
-    return scipy.sparse.coo_matrix((data, (range(k), ids)),
-                                   shape=(k, n_total))
 
 
 # edge optimization
