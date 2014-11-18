@@ -133,6 +133,69 @@ class PlaylistModel(BaseEstimator):
                 len(self.u_),
                 toc - tic)
 
+    def sample(self, user_id=None, user_factor=None,
+               n_songs=10, song_init=None, edge_init=None):
+        '''Sample a playlist from the trained model.
+        
+        :parameters:
+        
+            - user_id : key into the usermap
+            - user_factor : optional factor vector for an imaginary user
+                - if neither are provided, the all zeros vector is used instead
+            - n_songs : int > 0
+                number of songs to sample
+            - song_init : optional, int
+                index of a pre-selected first song
+            - edge_init : optional, int
+                index of a pre-selected first edge
+
+        :returns:
+            - playlists : list
+                list of track numbers
+            - edges : list
+                list of edge selections corresponding to selected tracks
+        '''
+
+        if user_factor is None:
+            # The default is all zeros
+            user_factor = np.zeros(self.n_factors)
+
+            if user_id in self.usermap_:
+                user_factor = self.u_[self.user_map[user_id]]
+            else:
+                raise ValueError('Unknown user_id: {0}'.format(user_id))
+
+        # Score the items
+        item_scores = np.exp(self.v_.dot(user_factor) + self.b_)
+
+        expw = np.exp(self.w_)
+
+        if edge_init is not None:
+            edge = edge_init
+        else:
+            if song_init is not None:
+                # Draw the initial edge from the song-conditional distribution
+                edge = categorical(self.H_[song_init].multiply(expw))
+            else:
+                # Draw the initial edge from the song-conditional distribution
+                edge = categorical(expw)
+
+        playlist = []
+        edges = []
+
+        for i in range(n_songs):
+            # Pick a song from the current edge
+            song = categorical(self.H_T_[edge].multiply(item_scores))
+
+            playlist.append(song)
+            edges.append(edge)
+
+            # Pick an edge from the current song
+            edge = categorical(self.H_[song].multiply(expw))
+
+        return playlist, edges
+
+
     def _fit_songs(self, bigrams):
 
         # 1. generate noise instances:
@@ -489,6 +552,12 @@ def make_bigrams(playlists):
 
 
 # Static methods: things that can parallelize
+def categorical(z):
+    '''Sample from a categorical random variable'''
+
+    assert np.all(z >= 0.0) and np.any(z > 0)
+
+    return np.flatnonzero(np.random.multinomial(1, z / z.sum()))[0]
 
 
 # common functions to user, item, and bias optimization:
@@ -524,7 +593,7 @@ def sample_noise_items(n_neg, H, edge_dist, b, y_pos):
 
     while len(noise_ids) < n_neg:
         # Sample an edge
-        edge_id = np.flatnonzero(np.random.multinomial(1, edge_dist))[0]
+        edge_id = categorical(edge_dist)
 
         item_dist = np.ravel(H[:, edge_id].T.multiply(full_item_dist))
 
@@ -536,7 +605,7 @@ def sample_noise_items(n_neg, H, edge_dist, b, y_pos):
         item_dist /= item_dist_norm
 
         while True:
-            new_item = np.flatnonzero(np.random.multinomial(1, item_dist))[0]
+            new_item = categorical(item_dist)
 
             if new_item not in y_forbidden:
                 break
