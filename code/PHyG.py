@@ -133,68 +133,6 @@ class PlaylistModel(BaseEstimator):
                 len(self.u_),
                 toc - tic)
 
-    def sample(self, user_id=None, user_factor=None,
-               n_songs=10, song_init=None, edge_init=None):
-        '''Sample a playlist from the trained model.
-        
-        :parameters:
-        
-            - user_id : key into the usermap
-            - user_factor : optional factor vector for an imaginary user
-                - if neither are provided, the all zeros vector is used instead
-            - n_songs : int > 0
-                number of songs to sample
-            - song_init : optional, int
-                index of a pre-selected first song
-            - edge_init : optional, int
-                index of a pre-selected first edge
-
-        :returns:
-            - playlists : list
-                list of track numbers
-            - edges : list
-                list of edge selections corresponding to selected tracks
-        '''
-
-        if user_factor is None:
-            # The default is all zeros
-            user_factor = np.zeros(self.n_factors)
-
-            if user_id in self.usermap_:
-                user_factor = self.u_[self.user_map[user_id]]
-            else:
-                raise ValueError('Unknown user_id: {0}'.format(user_id))
-
-        # Score the items
-        item_scores = np.exp(self.v_.dot(user_factor) + self.b_)
-
-        expw = np.exp(self.w_)
-
-        if edge_init is not None:
-            edge = edge_init
-        else:
-            if song_init is not None:
-                # Draw the initial edge from the song-conditional distribution
-                edge = categorical(self.H_[song_init].multiply(expw))
-            else:
-                # Draw the initial edge from the song-conditional distribution
-                edge = categorical(expw)
-
-        playlist = []
-        edges = []
-
-        for i in range(n_songs):
-            # Pick a song from the current edge
-            song = categorical(self.H_T_[edge].multiply(item_scores))
-
-            playlist.append(song)
-            edges.append(edge)
-
-            # Pick an edge from the current song
-            edge = categorical(self.H_[song].multiply(expw))
-
-        return playlist, edges
-
     def _fit_songs(self, bigrams):
 
         # 1. generate noise instances:
@@ -254,7 +192,7 @@ class PlaylistModel(BaseEstimator):
         #           (i, y[i], weights[i], ids, Lambda[i], rho, U, V, b)
         #
 
-        for step in range(self.max_iter_admm):
+        for step in range(self.max_admm_iter):
             tic = time.time()
             Ai = Parallel(n_jobs=self.n_jobs)(delayed(item_factor_optimize)(i,
                                                                             subproblems[i][0],
@@ -270,7 +208,7 @@ class PlaylistModel(BaseEstimator):
             toc = time.time()
             L.debug('  [SONG] [%3d/%3d] Solved %d subproblems in %.3f seconds',
                     step,
-                    self.max_iter_admm,
+                    self.max_admm_iter,
                     len(subproblems),
                     toc - tic)
 
@@ -289,7 +227,7 @@ class PlaylistModel(BaseEstimator):
             toc = time.time()
             L.debug('  [SONG] [%3d/%3d] Gathered solutions in %.3f seconds',
                     step,
-                    self.max_iter_admm,
+                    self.max_admm_iter,
                     toc - tic)
 
             # Update the residual*
@@ -300,7 +238,7 @@ class PlaylistModel(BaseEstimator):
             toc = time.time()
             L.debug('  [SONG] [%3d/%3d] Updated %d residuals in %.3f seconds',
                     step,
-                    self.max_iter_admm,
+                    self.max_admm_iter,
                     len(subproblems),
                     toc - tic)
 
@@ -308,7 +246,7 @@ class PlaylistModel(BaseEstimator):
 
     def _fit_bias(self, bigrams):
 
-        n_songs = len(self.H_)
+        n_songs = self.H_.shape[0]
 
         # Generate the sub-problem instances
         tic = time.time()
@@ -343,7 +281,7 @@ class PlaylistModel(BaseEstimator):
 
         rho = 1.0
 
-        for step in range(self.max_iter_admm):
+        for step in range(self.max_admm_iter):
             tic = time.time()
             ci = Parallel(n_jobs=self.n_jobs)(delayed(item_bias_optimize)(i,
                                                                           subproblems[i][0],
@@ -359,7 +297,7 @@ class PlaylistModel(BaseEstimator):
             toc = time.time()
             L.debug('  [BIAS] [%3d/%3d] Solved %d subproblems in %.3f seconds',
                     step,
-                    self.max_iter_admm,
+                    self.max_admm_iter,
                     len(subproblems),
                     toc - tic)
 
@@ -377,8 +315,7 @@ class PlaylistModel(BaseEstimator):
             toc = time.time()
             L.debug('  [BIAS] [%3d/%3d] Gathered solutions in %.3f seconds',
                     step,
-                    self.max_iter_admm,
-                    len(subproblems),
+                    self.max_admm_iter,
                     toc - tic)
 
             # Update the residuals
@@ -389,7 +326,7 @@ class PlaylistModel(BaseEstimator):
             toc = time.time()
             L.debug('  [BIAS] [%3d/%3d] Updated %d residuals in %.3f seconds',
                     step,
-                    self.max_iter_admm,
+                    self.max_admm_iter,
                     len(subproblems),
                     toc - tic)
 
@@ -477,21 +414,23 @@ class PlaylistModel(BaseEstimator):
         self.H_ = H.tocsr()
         self.H_T_ = H.T.tocsr()
 
+        n_songs, n_edges = self.H_.shape
+
         # Convert playlists to bigrams
         self.user_map_, bigrams = make_bigrams(playlists)
 
         # Initialize edge weights
         if self.w_ is None:
-            self.w_ = np.zeros(len(self.H_T_))
+            self.w_ = np.zeros(n_edges)
 
         if self.b_ is None:
-            self.b_ = np.zeros(len(self.H_))
+            self.b_ = np.zeros(n_songs)
 
         if self.n_factors and (self.u_ is None):
             self.u_ = np.zeros((len(playlists), self.n_factors))
 
         if self.n_factors and (self.v_ is None):
-            self.v_ = np.zeros((len(self.H_), self.n_factors))
+            self.v_ = np.zeros((n_songs, self.n_factors))
 
         # Training loop
 
@@ -519,6 +458,68 @@ class PlaylistModel(BaseEstimator):
                 self._fit_songs(bigrams)
 
         L.info('Done.')
+
+    def sample(self, user_id=None, user_factor=None,
+               n_songs=10, song_init=None, edge_init=None):
+        '''Sample a playlist from the trained model.
+        
+        :parameters:
+        
+            - user_id : key into the usermap
+            - user_factor : optional factor vector for an imaginary user
+                - if neither are provided, the all zeros vector is used instead
+            - n_songs : int > 0
+                number of songs to sample
+            - song_init : optional, int
+                index of a pre-selected first song
+            - edge_init : optional, int
+                index of a pre-selected first edge
+
+        :returns:
+            - playlists : list
+                list of track numbers
+            - edges : list
+                list of edge selections corresponding to selected tracks
+        '''
+
+        if user_factor is None:
+            # The default is all zeros
+            user_factor = np.zeros(self.n_factors)
+
+            if user_id in self.usermap_:
+                user_factor = self.u_[self.user_map[user_id]]
+            else:
+                raise ValueError('Unknown user_id: {0}'.format(user_id))
+
+        # Score the items
+        item_scores = np.exp(self.v_.dot(user_factor) + self.b_)
+
+        expw = np.exp(self.w_)
+
+        if edge_init is not None:
+            edge = edge_init
+        else:
+            if song_init is not None:
+                # Draw the initial edge from the song-conditional distribution
+                edge = categorical(self.H_[song_init].multiply(expw))
+            else:
+                # Draw the initial edge from the song-conditional distribution
+                edge = categorical(expw)
+
+        playlist = []
+        edges = []
+
+        for i in range(n_songs):
+            # Pick a song from the current edge
+            song = categorical(self.H_T_[edge].multiply(item_scores))
+
+            playlist.append(song)
+            edges.append(edge)
+
+            # Pick an edge from the current song
+            edge = categorical(self.H_[song].multiply(expw))
+
+        return playlist, edges
 
 
 # Static methods: things that can parallelize
@@ -643,8 +644,11 @@ def generate_user_instance(n_neg, H, edge_dist, bigrams, b=None,
         - ids : list of indices for the sampled points, shape=y.shape
     '''
 
-    if None not in (user_id, U, V):
-        item_scores = V.dot(U[user_id])
+    if b is None:
+        if None not in (user_id, U, V):
+            item_scores = V.dot(U[user_id])
+        else:
+            item_scores = np.ones(H.shape[0])
     else:
         item_scores = b
 
@@ -745,11 +749,6 @@ def item_factor_optimize(i, y, weights, ids, dual, rho, U_, V_, b_,
 
         return f, grad_out
 
-    # Make sure our data is properly shaped
-    assert len(V) == len(b)
-    assert len(V) == len(y)
-    assert len(V) == len(weights)
-
     # Probably a decent initial point
     if Aout is not None:
         a0 = Aout
@@ -779,14 +778,17 @@ def item_factor_optimize(i, y, weights, ids, dual, rho, U_, V_, b_,
 def item_bias_optimize(i, y, weights, ids, dual, rho, U_, V_, b_, Cout=None):
 
     # Slice out the relevant components of this subproblem
-    u = U_[i]
-    V = np.take(V_, ids, axis=0)
     b = np.take(b_, ids)
 
     # Compute the residual
     z = b - dual
 
-    user_scores = u.dot(V)
+    if U_ is not None:
+        u = U_[i]
+        V = np.take(V_, ids, axis=0)
+        user_scores = u.dot(V)
+    else:
+        user_scores = np.zeros_like(b)
 
     def __bias_obj(c):
 
@@ -802,11 +804,6 @@ def item_bias_optimize(i, y, weights, ids, dual, rho, U_, V_, b_, Cout=None):
         grad += -y * weights / (1.0 + np.exp(scores))
 
         return f, grad
-
-    # Make sure our data is properly shaped
-    assert len(V) == len(b)
-    assert len(V) == len(y)
-    assert len(V) == len(weights)
 
     if Cout is not None:
         c0 = Cout
@@ -914,11 +911,6 @@ def user_optimize_objective(reg, v, b, y, omega, u0=None):
         grad -= v.T.dot(y * omega / (1.0 + np.exp(scores)))
 
         return f, grad
-
-    # Make sure our data is properly shaped
-    assert len(v) == len(b)
-    assert len(v) == len(y)
-    assert len(v) == len(omega)
 
     if not u0:
         u0 = np.zeros(v.shape[-1])
