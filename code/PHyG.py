@@ -610,7 +610,7 @@ def sample_noise_items(n_neg, H, edge_dist, b, y_pos):
         item_dist_norm = np.sum(item_dist)
 
         if not item_dist_norm:
-            continue
+            break
 
         item_dist /= item_dist_norm
 
