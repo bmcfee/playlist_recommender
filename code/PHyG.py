@@ -6,20 +6,27 @@ import scipy.sparse
 import scipy.optimize
 import scipy.misc
 
+import logging
+import time
+
 from joblib import Parallel, delayed
 
 from sklearn.base import BaseEstimator
 
 __EXP_BOUND = 80.0
 
+L = logging.getLogger(__name__)
+
 
 class PlaylistModel(BaseEstimator):
+    '''Personalized hypergraph random walk playlist model'''
 
     def __init__(self, n_factors=8, edge_reg=1.0, bias_reg=1.0, user_reg=1.0,
                  song_reg=1.0, max_iter=10, edge_init=None, bias_init=None,
                  user_init=None, song_init=None, params='ebus', n_neg=64,
                  max_admm_iter=50,
                  n_jobs=1,
+                 verbose=0,
                  memory=None):
         """Initialize a personalized playlist model
 
@@ -71,6 +78,8 @@ class PlaylistModel(BaseEstimator):
          - n_jobs : int
             Maximum number of jobs to run in parallel
 
+         - verbose : int >= 0
+            Verbosity (logging) level
 
          - memory : None or joblib.Memory
             optional memory cache object
@@ -98,6 +107,10 @@ class PlaylistModel(BaseEstimator):
         self.user_reg = user_reg
         self.song_reg = song_reg
 
+        self.verbose = verbose
+
+        L.setLevel(self.verbose)
+
         if user_init is not None:
             self.n_factors = user_init.shape[1]
 
@@ -106,6 +119,7 @@ class PlaylistModel(BaseEstimator):
 
     def _fit_users(self, bigrams):
         # Solve over all users in parallel
+        tic = time.time()
         self.u_[:] = Parallel(n_jobs=self.n_jobs)(delayed(user_optimize)(self.n_neg,
                                                                          self.H_,
                                                                          self.w_,
@@ -114,6 +128,10 @@ class PlaylistModel(BaseEstimator):
                                                                          self.b_,
                                                                          y)
                                                   for y in bigrams)
+        toc = time.time()
+        L.debug('  [USER] Fit %d user factors in %.3f seconds',
+                len(self.u_),
+                toc - tic)
 
     def _fit_songs(self, bigrams):
 
@@ -126,6 +144,7 @@ class PlaylistModel(BaseEstimator):
 
         n_songs = len(self.H_)
 
+        tic = time.time()
         subproblems = Parallel(n_jobs=self.n_jobs)(delayed(generate_user_instance)(self.n_neg,
                                                                                    self.H_,
                                                                                    self.w_,
@@ -149,6 +168,11 @@ class PlaylistModel(BaseEstimator):
             duals.append(np.zeros((len(ids_i), self.n_factors)))
             Ai.append(np.take(V, ids_i, axis=0))
 
+        toc = time.time()
+        L.debug('  [SONG] Initialized %d subproblems in %.3f seconds',
+                len(subproblems),
+                toc - tic)
+
         # 3. initialize ADMM parameters
         #   a. V <- self.v_
         #   b. Lambda[i] = np.zeros( (len(ids_i), self.n_factors) )
@@ -169,6 +193,7 @@ class PlaylistModel(BaseEstimator):
         #
 
         for step in range(self.max_iter_admm):
+            tic = time.time()
             Ai = Parallel(n_jobs=self.n_jobs)(delayed(item_factor_optimize)(i,
                                                                             subproblems[i][0],
                                                                             subproblems[i][1],
@@ -180,8 +205,15 @@ class PlaylistModel(BaseEstimator):
                                                                             self.b_,
                                                                             Aout=Ai[i])
                                               for i in range(len(subproblems)))
+            toc = time.time()
+            L.debug('  [SONG] [%3d/%3d] Solved %d subproblems in %.3f seconds',
+                    step,
+                    self.max_iter_admm,
+                    len(subproblems),
+                    toc - tic)
 
             # Kill the old V
+            tic = time.time()
             V.fill(0.0)
             for sp_i, a_i, d_i in zip(subproblems, Ai, duals):
                 ids_i = sp_i[-1]
@@ -192,11 +224,23 @@ class PlaylistModel(BaseEstimator):
 
             # Broadcast the normalization
             V[:] = my_norm * V
+            toc = time.time()
+            L.debug('  [SONG] [%3d/%3d] Gathered solutions in %.3f seconds',
+                    step,
+                    self.max_iter_admm,
+                    toc - tic)
 
             # Update the residual*
+            tic = time.time()
             for sp_i, a_i, d_i in zip(subproblems, Ai, duals):
                 ids_i = sp_i[-1]
                 d_i[:] = d_i + a_i - np.take(V, ids_i, axis=0)
+            toc = time.time()
+            L.debug('  [SONG] [%3d/%3d] Updated %d residuals in %.3f seconds',
+                    step,
+                    self.max_iter_admm,
+                    len(subproblems),
+                    toc - tic)
 
         self.v_[:] = V
 
@@ -205,6 +249,7 @@ class PlaylistModel(BaseEstimator):
         n_songs = len(self.H_)
 
         # Generate the sub-problem instances
+        tic = time.time()
         subproblems = Parallel(n_jobs=self.n_jobs)(delayed(generate_user_instance)(self.n_neg,
                                                                                    self.H_,
                                                                                    self.w_,
@@ -213,6 +258,10 @@ class PlaylistModel(BaseEstimator):
                                                                                    V=self.v_,
                                                                                    user_id=i)
                                                    for i, y in enumerate(bigrams))
+        toc = time.time()
+        L.debug('  [BIAS] Initialized %d subproblems in %.3f seconds',
+                len(subproblems),
+                toc - tic)
 
         # Collect usage statistics over subproblems
         counts = np.zeros(n_songs)
@@ -221,6 +270,7 @@ class PlaylistModel(BaseEstimator):
 
         b = self.b_.copy()
 
+        tic = time.time()
         for sp in subproblems:
             ids_i = sp[-1]
             counts[ids_i] += 1.0
@@ -232,6 +282,7 @@ class PlaylistModel(BaseEstimator):
         rho = 1.0
 
         for step in range(self.max_iter_admm):
+            tic = time.time()
             ci = Parallel(n_jobs=self.n_jobs)(delayed(item_bias_optimize)(i,
                                                                           subproblems[i][0],
                                                                           subproblems[i][1],
@@ -243,8 +294,15 @@ class PlaylistModel(BaseEstimator):
                                                                           b,
                                                                           Cout=ci[i])
                                               for i in range(len(subproblems)))
+            toc = time.time()
+            L.debug('  [BIAS] [%3d/%3d] Solved %d subproblems in %.3f seconds',
+                    step,
+                    self.max_iter_admm,
+                    len(subproblems),
+                    toc - tic)
 
             # Kill the old b
+            tic = time.time()
             b.fill(0.0)
             for sp_i, c_i, d_i in zip(subproblems, ci, duals):
                 ids_i = sp_i[-1]
@@ -254,11 +312,24 @@ class PlaylistModel(BaseEstimator):
             my_norm = 1.0/(counts + self.bias_reg / rho)
 
             b[:] = my_norm * b
+            toc = time.time()
+            L.debug('  [BIAS] [%3d/%3d] Gathered solutions in %.3f seconds',
+                    step,
+                    self.max_iter_admm,
+                    len(subproblems),
+                    toc - tic)
 
             # Update the residuals
+            tic = time.time()
             for sp_i, c_i, d_i in zip(subproblems, ci, duals):
                 ids_i = sp_i[-1]
                 d_i[:] = d_i + c_i - np.take(b, ids_i)
+            toc = time.time()
+            L.debug('  [BIAS] [%3d/%3d] Updated %d residuals in %.3f seconds',
+                    step,
+                    self.max_iter_admm,
+                    len(subproblems),
+                    toc - tic)
 
         # Save the results
         self.b_[:] = b
@@ -366,16 +437,26 @@ class PlaylistModel(BaseEstimator):
             # Order of operations:
 
             if 'e' in self.params:
+                L.info('[%3d/%3d] Fitting edge weights',
+                       iteration, self.max_iter)
                 self._fit_edges(bigrams)
 
             if 'b' in self.params:
+                L.info('[%3d/%3d] Fitting song bias',
+                       iteration, self.max_iter)
                 self._fit_bias(bigrams)
 
             if 'u' in self.params:
+                L.info('[%3d/%3d] Fitting user factors',
+                       iteration, self.max_iter)
                 self._fit_users(bigrams)
 
             if 's' in self.params:
+                L.info('[%3d/%3d] Fitting song factors',
+                       iteration, self.max_iter)
                 self._fit_songs(bigrams)
+
+        L.info('Done.')
 
 
 def make_bigrams(playlists):
@@ -730,9 +811,6 @@ def user_optimize(n_noise, H, w, reg, v, b, bigrams, u0=None):
                                    u0=u0)
 
 
-# TODO:   2014-09-18 10:46:30 by Brian McFee <brian.mcfee@nyu.edu>
-#  refactor this to support item and bias optimization
-#  include an additional parameter for the regularization term/lagrangian
 def user_optimize_objective(reg, v, b, y, omega, u0=None):
     '''Optimize a user vector from a sample of positive and noise items
 
