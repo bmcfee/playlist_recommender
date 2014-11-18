@@ -86,7 +86,7 @@ class PlaylistModel(BaseEstimator):
 
         """
 
-        if 'u' not in params or 'v' not in params:
+        if 'u' not in params or 's' not in params:
             n_factors = 0
 
         self.max_iter = max_iter
@@ -142,7 +142,7 @@ class PlaylistModel(BaseEstimator):
         #       ids[i]      # indices of items for this subproblem
         #
 
-        n_songs = len(self.H_)
+        n_songs = self.H_.shape[0]
 
         tic = time.time()
         subproblems = Parallel(n_jobs=self.n_jobs)(delayed(generate_user_instance)(self.n_neg,
@@ -220,10 +220,11 @@ class PlaylistModel(BaseEstimator):
                 V[ids_i, :] += (a_i + d_i)
 
             # Compute the normalization factor
-            my_norm = 1.0/(counts + self.song_reg / rho)
+            my_norm = np.reshape(1.0/(counts + self.song_reg / rho), ((-1, 1)))
 
             # Broadcast the normalization
-            V[:] = my_norm * V
+            V[:] *= my_norm
+
             toc = time.time()
             L.debug('  [SONG] [%3d/%3d] Gathered solutions in %.3f seconds',
                     step,
@@ -430,7 +431,7 @@ class PlaylistModel(BaseEstimator):
             self.u_ = np.zeros((len(playlists), self.n_factors))
 
         if self.n_factors and (self.v_ is None):
-            self.v_ = np.zeros((n_songs, self.n_factors))
+            self.v_ = np.random.randn(n_songs, self.n_factors)
 
         # Training loop
 
@@ -794,7 +795,7 @@ def item_bias_optimize(i, y, weights, ids, dual, rho, U_, V_, b_, Cout=None):
     if U_ is not None:
         u = U_[i]
         V = np.take(V_, ids, axis=0)
-        user_scores = u.dot(V)
+        user_scores = V.dot(u)
     else:
         user_scores = np.zeros_like(b)
 
