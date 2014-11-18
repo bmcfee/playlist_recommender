@@ -555,9 +555,11 @@ def make_bigrams(playlists):
 def categorical(z):
     '''Sample from a categorical random variable'''
 
+    z = np.ravel(np.asarray(z) / z.sum())
+
     assert np.all(z >= 0.0) and np.any(z > 0)
 
-    return np.flatnonzero(np.random.multinomial(1, z / z.sum()))[0]
+    return np.flatnonzero(np.random.multinomial(1, z))[0]
 
 
 # common functions to user, item, and bias optimization:
