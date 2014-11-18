@@ -482,17 +482,25 @@ class PlaylistModel(BaseEstimator):
                 list of edge selections corresponding to selected tracks
         '''
 
-        if user_factor is None:
-            # The default is all zeros
-            user_factor = np.zeros(self.n_factors)
+        item_scores = np.zeros(self.H_.shape[0])
 
-            if user_id in self.usermap_:
-                user_factor = self.u_[self.user_map[user_id]]
-            else:
-                raise ValueError('Unknown user_id: {0}'.format(user_id))
+        if self.n_factors > 0:
+            if user_factor is None:
+                # The default is all zeros
+                user_factor = np.zeros(self.n_factors)
 
-        # Score the items
-        item_scores = np.exp(self.v_.dot(user_factor) + self.b_)
+                if user_id in self.user_map_:
+                    user_factor = self.u_[self.user_map_[user_id]]
+                else:
+                    raise ValueError('Unknown user_id: {0}'.format(user_id))
+
+            # Score the items
+            item_scores = self.v_.dot(user_factor)
+
+        if self.b_ is not None:
+            item_scores += self.b_
+
+        item_scores = np.exp(item_scores)
 
         expw = np.exp(self.w_)
 
