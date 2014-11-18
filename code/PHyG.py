@@ -127,15 +127,15 @@ class PlaylistModel(BaseEstimator):
         subproblems = Parallel(n_jobs=self.n_jobs)(delayed(generate_user_instance)(self.n_neg,
                                                                                    self.H_,
                                                                                    self.w_,
-                                                                                   self.b_,
-                                                                                   y)
+                                                                                   y,
+                                                                                   b=self.b_)
                                                    for y in bigrams)
 
         # 2. collect usage statistics over subproblems
         #       Z[i] = count subproblems using item i
         #
 
-        counts = np.zeros_like(n_songs)
+        counts = np.zeros(n_songs)
         duals = []
         Ai = []
 
@@ -186,7 +186,7 @@ class PlaylistModel(BaseEstimator):
                 V[ids_i, :] += (a_i + d_i)
 
             # Compute the normalization factor
-            my_norm = (counts + self.song_reg / rho)**(-1.0)
+            my_norm = 1.0/(counts + self.song_reg / rho)
 
             # Broadcast the normalization
             V[:] = my_norm * V
@@ -198,9 +198,68 @@ class PlaylistModel(BaseEstimator):
 
         self.v_[:] = V
 
-    def _fit_bias(self, iter=None):
+    def _fit_bias(self, bigrams, iter=None):
 
-        pass
+        n_songs = len(self.H_)
+
+        # Generate the sub-problem instances
+        subproblems = Parallel(n_jobs=self.n_jobs)(delayed(generate_user_instance)(self.n_neg,
+                                                                                   self.H_,
+                                                                                   self.w_,
+                                                                                   y,
+                                                                                   U=self.u_,
+                                                                                   V=self.v_,
+                                                                                   user_id=i)
+                                                   for i, y in enumerate(bigrams))
+
+        # Collect usage statistics over subproblems
+        counts = np.zeros(n_songs)
+        duals = []
+        ci = []
+
+        b = self.b_.copy()
+
+        for sp in subproblems:
+            ids_i = sp[-1]
+            counts[ids_i] += 1.0
+            duals.append(np.zeros(len(ids_i)))
+            ci.append(np.take(b, ids_i))
+
+        # Initialize ADMM parameters
+
+        rho = 1.0
+
+        for step in range(self.max_iter_admm):
+            ci = Parallel(n_jobs=self.n_jobs)(delayed(item_bias_optimize)(i,
+                                                                          subproblems[i][0],
+                                                                          subproblems[i][1],
+                                                                          subproblems[i][2],
+                                                                          duals[i],
+                                                                          rho,
+                                                                          self.u_,
+                                                                          self.v_,
+                                                                          b,
+                                                                          Cout=ci[i])
+                                              for i in range(len(subproblems)))
+
+            # Kill the old b
+            b.fill(0.0)
+            for sp_i, c_i, d_i in zip(subproblems, ci, duals):
+                ids_i = sp_i[-1]
+                b[ids_i] += c_i + d_i
+
+            # Compute the normalization factor
+            my_norm = 1.0/(counts + self.bias_reg / rho)
+
+            b[:] = my_norm * b
+
+            # Update the residuals
+            for sp_i, c_i, d_i in zip(subproblems, ci, duals):
+                ids_i = sp_i[-1]
+                d_i[:] = d_i + c_i - np.take(b, ids_i)
+
+        # Save the results
+        self.b_[:] = b
 
     def _fit_edges(self, bigrams, w0=None, iter=None):
         '''Update the edge weights'''
@@ -216,12 +275,12 @@ class PlaylistModel(BaseEstimator):
 
         # Scatter-gather the bigram statistics over all users
         for Z_i, nu_i, np_i in Parallel(n_jobs=self.n_jobs)(delayed(edge_user_weights)(self.H_,
-                                                                                       self.H_T_,
-                                                                                       self.u_,
-                                                                                       idx,
-                                                                                       self.v_,
-                                                                                       self.b_, y)
-                                                            for (idx, y) in enumerate(bigrams)):
+                                                                    self.H_T_,
+                                                                    self.u_,
+                                                                    idx,
+                                                                    self.v_,
+                                                                    self.b_, y)
+                                         for (idx, y) in enumerate(bigrams)):
             Z += Z_i
             num_usage += nu_i
             num_playlists += np_i
@@ -344,8 +403,14 @@ def sample_noise_items(n_neg, H, edge_dist, b, y_pos):
     return noise_ids
 
 
-def generate_user_instance(n_neg, H, edge_dist, b, bigrams):
+def generate_user_instance(n_neg, H, edge_dist, bigrams, b=None,
+                           U=None, V=None, user_id=None):
     '''Generate a subproblem instance.
+
+    By default, negatives will be sampled according to their bias term `b`.
+
+    If latent factors and a user id are supplied, negatives will be sampled
+    according to their unbiased, personalized scores `U[user_id].dot(V)`
 
     Inputs:
         - n_neg : # of negative samples
@@ -353,12 +418,20 @@ def generate_user_instance(n_neg, H, edge_dist, b, bigrams):
         - edge_dist : weights of the edges of H
         - b : bias factors for items
         - bigrams : list of tuples (s, t) for the user
+        - U : user factors
+        - V : item factors
+        - user_id : index of the user
 
     Outputs:
         - y : +-1 label vector
         - weights : importance weights, shape=y.shape
         - ids : list of indices for the sampled points, shape=y.shape
     '''
+
+    if None not in (user_id, U, V):
+        item_scores = U[user_id].dot(V)
+    else:
+        item_scores = b
 
     # 1. Extract positive ids
     pos_ids = [t for (s, t) in bigrams]
@@ -369,7 +442,7 @@ def generate_user_instance(n_neg, H, edge_dist, b, bigrams):
     noise_ids = sample_noise_items(n_neg,
                                    H,
                                    np.ravel(exp_w.todense()),
-                                   b,
+                                   item_scores,
                                    pos_ids)
 
     # 3. Compute and normalize the bigram transition weights
@@ -499,6 +572,56 @@ def item_factor_optimize(i, y, weights, ids, dual, rho, U_, V_, b_,
     return Aout
 
 
+# bias optimization
+def item_bias_optimize(i, y, weights, ids, dual, rho, U_, V_, b_, Cout=None):
+
+    # Slice out the relevant components of this subproblem
+    u = U_[i]
+    V = np.take(V_, ids, axis=0)
+    b = np.take(b_, ids)
+
+    # Compute the residual
+    z = b - dual
+
+    user_scores = u.dot(V)
+
+    def __bias_obj(c):
+
+        scores = y * (user_scores + c)
+
+        delta = c - z
+
+        f = rho * 0.5 * np.sum(delta**2)
+
+        f += weights.dot(np.logaddexp(0, -scores))
+
+        grad = rho * delta
+        grad += -y * weights / (1.0 + np.exp(scores))
+
+        return f, grad
+
+    # Make sure our data is properly shaped
+    assert len(V) == len(b)
+    assert len(V) == len(y)
+    assert len(V) == len(weights)
+
+    if Cout is not None:
+        c0 = Cout
+    else:
+        c0 = b.copy()
+
+    c_opt, value, diagnostic = scipy.optimize.fmin_l_bfgs_b(__bias_obj, c0)
+
+    assert diagnostic['warnflag'] == 0
+
+    if Cout is not None:
+        Cout[:] = c_opt
+    else:
+        Cout = c_opt
+
+    return Cout
+
+
 # user optimization
 def user_optimize(n_noise, H, w, reg, v, b, bigrams, u0=None):
     '''Optimize a user's latent factor representation
@@ -533,7 +656,7 @@ def user_optimize(n_noise, H, w, reg, v, b, bigrams, u0=None):
           Optimal user vector
     '''
 
-    y, weights, ids = generate_user_instance(n_noise, H, w, b, bigrams)
+    y, weights, ids = generate_user_instance(n_noise, H, w, bigrams, b=b)
 
     return user_optimize_objective(reg,
                                    np.take(v, ids, axis=0),
