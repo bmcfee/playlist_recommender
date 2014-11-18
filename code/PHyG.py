@@ -86,8 +86,10 @@ class PlaylistModel(BaseEstimator):
 
         """
 
-        if 'u' not in params or 's' not in params:
-            n_factors = 0
+        # If we don't learn latent factors, set n_factors to 1 and pin the user variables
+        # to 0
+        if 'u' not in params and 's' not in params:
+            n_factors = 1
 
         self.max_iter = max_iter
         self.max_admm_iter = max_admm_iter
@@ -427,10 +429,12 @@ class PlaylistModel(BaseEstimator):
         if self.b_ is None:
             self.b_ = np.zeros(n_songs)
 
-        if self.n_factors and (self.u_ is None):
+        if self.u_ is None:
+            # Initialize to 0 by default
             self.u_ = np.zeros((len(playlists), self.n_factors))
 
-        if self.n_factors and (self.v_ is None):
+        if self.v_ is None:
+            # Initialize to random by default
             self.v_ = np.random.randn(n_songs, self.n_factors)
 
         # Training loop
@@ -654,7 +658,7 @@ def generate_user_instance(n_neg, H, edge_dist, bigrams, b=None,
     '''
 
     if b is None:
-        if None not in (user_id, U, V):
+        if None not in [user_id, U, V]:
             item_scores = V.dot(U[user_id])
         else:
             item_scores = np.ones(H.shape[0])
