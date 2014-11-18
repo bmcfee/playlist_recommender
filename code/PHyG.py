@@ -42,10 +42,10 @@ class PlaylistModel(BaseEstimator):
          - max_iter : int > 0
             Number of optimization steps
 
-         - edge_init : ndarray or None
+         - edge_init : ndarray shape=(n_features,) or None
             Initial value of edge weight vector
 
-         - bias_init : ndarray or None
+         - bias_init : ndarray shape=(n_songs,) or None
             Initial value of song bias vector
 
          - user_init : None or ndarray, shape=(n_users, n_factors)
@@ -81,10 +81,12 @@ class PlaylistModel(BaseEstimator):
             n_factors = 0
 
         self.max_iter = max_iter
+        self.max_admm_iter = max_admm_iter
+        self.n_jobs = n_jobs
+
         self.params = params
         self.n_factors = n_factors
         self.n_neg = n_neg
-        self.n_jobs = n_jobs
 
         self.w_ = edge_init
         self.b_ = bias_init
@@ -102,7 +104,7 @@ class PlaylistModel(BaseEstimator):
         if song_init is not None:
             self.n_factors = song_init.shape[1]
 
-    def _fit_users(self, bigrams, iter=None):
+    def _fit_users(self, bigrams):
         # Solve over all users in parallel
         self.u_[:] = Parallel(n_jobs=self.n_jobs)(delayed(user_optimize)(self.n_neg,
                                                                          self.H_,
@@ -113,7 +115,7 @@ class PlaylistModel(BaseEstimator):
                                                                          y)
                                                   for y in bigrams)
 
-    def _fit_songs(self, bigrams, iter=None):
+    def _fit_songs(self, bigrams):
 
         # 1. generate noise instances:
         #   for each user subproblem, we need:
@@ -198,7 +200,7 @@ class PlaylistModel(BaseEstimator):
 
         self.v_[:] = V
 
-    def _fit_bias(self, bigrams, iter=None):
+    def _fit_bias(self, bigrams):
 
         n_songs = len(self.H_)
 
@@ -261,7 +263,7 @@ class PlaylistModel(BaseEstimator):
         # Save the results
         self.b_[:] = b
 
-    def _fit_edges(self, bigrams, w0=None, iter=None):
+    def _fit_edges(self, bigrams):
         '''Update the edge weights'''
 
         # The edge weights
@@ -312,8 +314,7 @@ class PlaylistModel(BaseEstimator):
 
             return obj, grad
 
-        if not w0:
-            w0 = np.zeros(self.H_.shape[0])
+        w0 = self.w_.copy()
 
         bounds = [(-__EXP_BOUND, __EXP_BOUND)] * len(w0)
         w_opt, value, diag = scipy.optimize.fmin_l_bfgs_b(__edge_objective,
@@ -323,13 +324,18 @@ class PlaylistModel(BaseEstimator):
         # Ensure that convergence happened correctly
         assert diag['warnflag'] == 0
 
-        self.w_ = w_opt
+        self.w_[:] = w_opt
 
     def fit(self, playlists, H):
         '''fit the model.
 
         :parameters:
           - playlists : dict (users => list of playlists)
+
+            eg,
+                playlists = {'bm106': [ [23, 35, 41, 32, 39],
+                                        [18, 19, 72, 4],
+                                        [12, 9] ] }
 
           - H : scipy.sparse.csr_matrix (n_songs, n_edges)
         '''
@@ -339,9 +345,67 @@ class PlaylistModel(BaseEstimator):
         self.H_T_ = H.T.tocsr()
 
         # Convert playlists to bigrams
-        #   bigrams[user_id] = [(s,t) for all pairs (s,t) in playlists[user_id]]
+        self.user_map_, bigrams = make_bigrams(playlists)
 
-        pass
+        # Initialize edge weights
+        if self.w_ is None:
+            self.w_ = np.zeros(len(self.H_T_))
+
+        if self.b_ is None:
+            self.b_ = np.zeros(len(self.H_))
+
+        if self.n_factors and (self.u_ is None):
+            self.u_ = np.zeros((len(playlists), self.n_factors))
+
+        if self.n_factors and (self.v_ is None):
+            self.v_ = np.zeros((len(self.H_), self.n_factors))
+
+        # Training loop
+
+        for iteration in range(self.max_iter):
+            # Order of operations:
+
+            if 'e' in self.params:
+                self._fit_edges(bigrams)
+
+            if 'b' in self.params:
+                self._fit_bias(bigrams)
+
+            if 'u' in self.params:
+                self._fit_users(bigrams)
+
+            if 's' in self.params:
+                self._fit_songs(bigrams)
+
+
+def make_bigrams(playlists):
+    '''generate user map and bigram lists.
+
+    input:
+        - playlists : dict : user_id => playlists
+
+    '''
+
+    user_map = dict()
+
+    bigrams = []
+
+    for i, (user_id, user_playlists) in enumerate(playlists.iteritems()):
+
+        user_map[user_id] = i
+
+        user_bigrams = []
+        for pl in user_playlists:
+            # Push a None onto the front
+            my_pl = [None]
+            my_pl.extend(pl)
+
+            user_bigrams.extend(zip(my_pl[:-1], my_pl[1:]))
+
+        bigrams.append(user_bigrams)
+
+    return user_map, bigrams
+
 
 # Static methods: things that can parallelize
 
