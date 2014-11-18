@@ -120,13 +120,13 @@ class PlaylistModel(BaseEstimator):
     def _fit_users(self, bigrams):
         # Solve over all users in parallel
         tic = time.time()
-        self.u_[:] = Parallel(n_jobs=self.n_jobs)(delayed(user_optimize)(self.n_neg,
-                                                                         self.H_,
-                                                                         self.w_,
-                                                                         self.user_reg,
-                                                                         self.v_,
-                                                                         self.b_,
-                                                                         y)
+        self.u_[:] = Parallel(n_jobs=self.n_jobs)(delayed(user_problem)(self.n_neg,
+                                                                        self.H_,
+                                                                        self.w_,
+                                                                        self.user_reg,
+                                                                        self.v_,
+                                                                        self.b_,
+                                                                        y)
                                                   for y in bigrams)
         toc = time.time()
         L.debug('  [USER] Fit %d user factors in %.3f seconds',
@@ -768,7 +768,7 @@ def item_bias_optimize(i, y, weights, ids, dual, rho, U_, V_, b_, Cout=None):
 
 
 # user optimization
-def user_optimize(n_noise, H, w, reg, v, b, bigrams, u0=None):
+def user_problem(n_noise, H, w, reg, v, b, bigrams, u0=None):
     '''Optimize a user's latent factor representation
 
     :parameters:
