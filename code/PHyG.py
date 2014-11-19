@@ -13,7 +13,7 @@ from joblib import Parallel, delayed
 
 from sklearn.base import BaseEstimator
 
-_EXP_BOUND = 80.0
+_EXP_BOUND = 20.0
 
 L = logging.getLogger(__name__)
 
@@ -417,7 +417,7 @@ class PlaylistModel(BaseEstimator):
         n_songs, n_edges = self.H_.shape
 
         # Convert playlists to bigrams
-        self.user_map_, bigrams = make_bigrams(playlists)
+        self.user_map_, bigrams = make_bigrams_usermap(playlists)
 
         # Initialize edge weights
         if self.w_ is None:
@@ -531,9 +531,83 @@ class PlaylistModel(BaseEstimator):
 
         return playlist, edges
 
+    def loglikelihood(self, playlist, user_id=None, user_num=None, normalize=False):
+        '''Compute the log-likelihood of a single playlist.
+
+        :parameters:
+            playlist : list of ints
+              The playlist
+
+            user_id : hashable or None
+              If supplied, the key for the user
+
+            user_num : int or None
+              If supplied, the index number of the user
+              If no user data is supplied, we synthesize an
+              all-zeros user factor
+
+            normalize : bool
+              If true, loglikelihood will be normalized by the length of the list
+
+        :returns:
+            - loglikelihood : float
+              The log probability of generating the observed sequence
+        '''
+
+        user_factor = np.zeros(self.n_factors)
+
+        if user_id is not None:
+            user_num = self.user_map_[user_id]
+
+        if user_num is not None:
+            user_factor = self.u_[user_num]
+
+        # Score the items
+        item_scores = np.zeros(self.H_.shape[0])
+
+        if self.v_ is not None:
+            item_scores += self.v_.dot(user_factor)
+
+        if self.b_ is not None:
+            item_scores += self.b_
+
+        item_scores = np.exp(item_scores)
+
+        # Compute edge probabilities
+        edge_scores = np.exp(self.w_)
+
+        # Build bigrams
+        bigrams = playlist_to_bigram(playlist)
+
+        # Compute likelihoods
+        ll = 0.0
+        for s, t in bigrams:
+            # Compute the edge distribution P(e | s)
+            if s is None:
+                # All edges are valid
+                p_e_s = edge_scores
+            else:
+                # Only edges touching s are valid
+                p_e_s = self.H_[s].multiply(edge_scores)
+
+            # Normalize to form a distribution
+            p_e_s = np.ravel(p_e_s) / np.sum(p_e_s)
+
+            # Compute P(t | e) = score(t) / sum(score(j) | j in E)
+            edge_mass = self.H_T_ * item_scores
+            p_t_e = item_scores[t] / edge_mass
+
+            # Compute P(t | s) = P(t | e) P(e | s)
+            ll += np.log(p_t_e.dot(p_e_s))
+
+        if normalize:
+            ll /= len(playlist)
+
+        return ll
+
 
 # Static methods: things that can parallelize
-def make_bigrams(playlists):
+def make_bigrams_usermap(playlists):
     '''generate user map and bigram lists.
 
     input:
@@ -545,21 +619,31 @@ def make_bigrams(playlists):
 
     bigrams = []
 
-    for i, (user_id, user_playlists) in enumerate(playlists.iteritems()):
+    for i, user_id in enumerate(sorted(playlists)):
 
         user_map[user_id] = i
 
         user_bigrams = []
-        for pl in user_playlists:
-            # Push a None onto the front
-            my_pl = [None]
-            my_pl.extend(pl)
-
-            user_bigrams.extend(zip(my_pl[:-1], my_pl[1:]))
+        for pl in playlists[user_id]:
+            user_bigrams.extend(playlist_to_bigram(pl))
 
         bigrams.append(user_bigrams)
 
     return user_map, bigrams
+
+
+def playlist_to_bigram(playlist):
+    '''Convert a sequence of ids into bigram form.
+
+    A 'None' is pushed onto the front to indicate the beginning.
+    '''
+
+    my_pl = [None]
+    my_pl.extend(playlist)
+
+    bigrams = zip(my_pl[:-1], my_pl[1:])
+
+    return bigrams
 
 
 def categorical(z):
@@ -656,6 +740,7 @@ def generate_user_instance(n_neg, H, edge_dist, bigrams, b=None,
     '''
 
     if b is None:
+        # FIXME:  2014-11-19 12:04:36 by Brian McFee <brian.mcfee@nyu.edu>
         if None not in [user_id, U, V]:
             item_scores = V.dot(U[user_id])
         else:
