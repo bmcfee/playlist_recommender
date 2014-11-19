@@ -122,9 +122,10 @@ class PlaylistModel(BaseEstimator):
     def _fit_users(self, bigrams):
         # Solve over all users in parallel
         tic = time.time()
+        exp_w = np.exp(self.w_)
         self.u_[:] = Parallel(n_jobs=self.n_jobs)(delayed(user_problem)(self.n_neg,
                                                                         self.H_,
-                                                                        self.w_,
+                                                                        exp_w,
                                                                         self.user_reg,
                                                                         self.v_,
                                                                         self.b_,
@@ -146,10 +147,12 @@ class PlaylistModel(BaseEstimator):
 
         n_songs = self.H_.shape[0]
 
+        exp_w = np.exp(self.w_)
+
         tic = time.time()
         subproblems = Parallel(n_jobs=self.n_jobs)(delayed(generate_user_instance)(self.n_neg,
                                                                                    self.H_,
-                                                                                   self.w_,
+                                                                                   exp_w,
                                                                                    y,
                                                                                    b=self.b_)
                                                    for y in bigrams)
@@ -222,10 +225,10 @@ class PlaylistModel(BaseEstimator):
                 V[ids_i, :] += (a_i + d_i)
 
             # Compute the normalization factor
-            my_norm = np.reshape(1.0/(counts + self.song_reg / rho), ((-1, 1)))
+            my_norm = 1.0/(counts + self.song_reg / rho)
 
             # Broadcast the normalization
-            V[:] *= my_norm
+            V[:] *= my_norm.reshape((-1, 1))
 
             toc = time.time()
             L.debug('  [SONG] [%3d/%3d] Gathered solutions in %.3f seconds',
@@ -251,11 +254,12 @@ class PlaylistModel(BaseEstimator):
 
         n_songs = self.H_.shape[0]
 
+        exp_w = np.exp(self.w_)
         # Generate the sub-problem instances
         tic = time.time()
         subproblems = Parallel(n_jobs=self.n_jobs)(delayed(generate_user_instance)(self.n_neg,
                                                                                    self.H_,
-                                                                                   self.w_,
+                                                                                   exp_w,
                                                                                    y,
                                                                                    U=self.u_,
                                                                                    V=self.v_,
@@ -715,7 +719,7 @@ def sample_noise_items(n_neg, H, edge_dist, b, y_pos):
     return noise_ids
 
 
-def generate_user_instance(n_neg, H, edge_dist, bigrams, b=None,
+def generate_user_instance(n_neg, H, exp_w, bigrams, b=None,
                            U=None, V=None, user_id=None):
     '''Generate a subproblem instance.
 
@@ -727,7 +731,7 @@ def generate_user_instance(n_neg, H, edge_dist, bigrams, b=None,
     Inputs:
         - n_neg : # of negative samples
         - H : hypergraph incidence matrix
-        - edge_dist : weights of the edges of H
+        - edge_dist : weights of the edges of H (exponentiated)
         - b : bias factors for items
         - bigrams : list of tuples (s, t) for the user
         - U : user factors
@@ -750,8 +754,6 @@ def generate_user_instance(n_neg, H, edge_dist, bigrams, b=None,
 
     # 1. Extract positive ids
     pos_ids = [t for (s, t) in bigrams]
-
-    exp_w = np.exp(edge_dist)
 
     # 2. Sample n_neg songs from the noise model (u=0)
     noise_ids = sample_noise_items(n_neg,
@@ -925,7 +927,7 @@ def item_bias_optimize(i, y, weights, ids, dual, rho, U_, V_, b_, Cout=None):
 
 
 # user optimization
-def user_problem(n_noise, H, w, reg, v, b, bigrams, u0=None):
+def user_problem(n_noise, H, exp_w, reg, v, b, bigrams, u0=None):
     '''Optimize a user's latent factor representation
 
     :parameters:
@@ -935,8 +937,8 @@ def user_problem(n_noise, H, w, reg, v, b, bigrams, u0=None):
         - H : scipy.sparse.csr_matrix, shape=(n_songs, n_edges)
           The hypergraph adjacency matrix
 
-        - w : ndarray, shape=(n_edges,)
-          edge weight array
+        - exp_w : ndarray, shape=(n_edges,)
+          edge weight array (exponentiated)
 
         - reg : float >= 0
           Regularization penalty
@@ -958,7 +960,7 @@ def user_problem(n_noise, H, w, reg, v, b, bigrams, u0=None):
           Optimal user vector
     '''
 
-    y, weights, ids = generate_user_instance(n_noise, H, w, bigrams, b=b)
+    y, weights, ids = generate_user_instance(n_noise, H, exp_w, bigrams, b=b)
 
     return user_optimize_objective(reg,
                                    np.take(v, ids, axis=0),
