@@ -86,8 +86,8 @@ class PlaylistModel(BaseEstimator):
 
         """
 
-        # If we don't learn latent factors, set n_factors to 1 and pin the user variables
-        # to 0
+        # If we don't learn latent factors,
+        # set n_factors to 1 and pin the user variables to 0
         if 'u' not in params and 's' not in params:
             n_factors = 1
 
@@ -464,9 +464,9 @@ class PlaylistModel(BaseEstimator):
     def sample(self, user_id=None, user_factor=None,
                n_songs=10, song_init=None, edge_init=None):
         '''Sample a playlist from the trained model.
-        
+
         :parameters:
-        
+
             - user_id : key into the usermap
             - user_factor : optional factor vector for an imaginary user
                 - if neither are provided, the all zeros vector is used instead
@@ -531,7 +531,8 @@ class PlaylistModel(BaseEstimator):
 
         return playlist, edges
 
-    def loglikelihood(self, playlist, user_id=None, user_num=None, normalize=False):
+    def loglikelihood(self, playlist, user_id=None, user_num=None,
+                      normalize=False):
         '''Compute the log-likelihood of a single playlist.
 
         :parameters:
@@ -547,7 +548,7 @@ class PlaylistModel(BaseEstimator):
               all-zeros user factor
 
             normalize : bool
-              If true, loglikelihood will be normalized by the length of the list
+              If true, loglikelihood will be normalized by length
 
         :returns:
             - loglikelihood : float
@@ -740,8 +741,7 @@ def generate_user_instance(n_neg, H, edge_dist, bigrams, b=None,
     '''
 
     if b is None:
-        # FIXME:  2014-11-19 12:04:36 by Brian McFee <brian.mcfee@nyu.edu>
-        if None not in [user_id, U, V]:
+        if user_id is not None:
             item_scores = V.dot(U[user_id])
         else:
             item_scores = np.ones(H.shape[0])
