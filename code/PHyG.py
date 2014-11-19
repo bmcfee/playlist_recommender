@@ -13,7 +13,7 @@ from joblib import Parallel, delayed
 
 from sklearn.base import BaseEstimator
 
-__EXP_BOUND = 80.0
+_EXP_BOUND = 80.0
 
 L = logging.getLogger(__name__)
 
@@ -360,9 +360,6 @@ class PlaylistModel(BaseEstimator):
             num_usage += nu_i
             num_playlists += np_i
 
-        Z = np.asarray(Z.todense()).ravel()
-        num_usage = np.asarray(num_usage.todense()).ravel()
-
         def __edge_objective(w):
 
             obj = self.edge_reg * 0.5 * np.sum(w**2)
@@ -389,7 +386,7 @@ class PlaylistModel(BaseEstimator):
 
         w0 = self.w_.copy()
 
-        bounds = [(-__EXP_BOUND, __EXP_BOUND)] * len(w0)
+        bounds = [(-_EXP_BOUND, _EXP_BOUND)] * len(w0)
         w_opt, value, diag = scipy.optimize.fmin_l_bfgs_b(__edge_objective,
                                                           w0,
                                                           bounds=bounds)
@@ -572,7 +569,7 @@ def categorical(z):
 
     assert np.all(z >= 0.0) and np.any(z > 0)
 
-    return np.flatnonzero(np.random.multinomial(1, z))[0]
+    return np.flatnonzero(np.random.multinomial(1, z))[0].astype(np.uint)
 
 
 # common functions to user, item, and bias optimization:
@@ -584,9 +581,10 @@ def make_bigram_weights(H, s, t, weight):
         # Otherwise, (s,t) is a valid transition, so use both
         my_weight = H[s].multiply(H[t]).multiply(weight)
 
+    my_weight = np.ravel(my_weight)
+
     # Normalize the edge probabilities
-    my_weight /= my_weight.sum()
-    return my_weight
+    return my_weight / my_weight.sum()
 
 
 def sample_noise_items(n_neg, H, edge_dist, b, y_pos):
@@ -668,12 +666,12 @@ def generate_user_instance(n_neg, H, edge_dist, bigrams, b=None,
     # 1. Extract positive ids
     pos_ids = [t for (s, t) in bigrams]
 
-    exp_w = scipy.sparse.lil_matrix(np.exp(edge_dist))
+    exp_w = np.exp(edge_dist)
 
     # 2. Sample n_neg songs from the noise model (u=0)
     noise_ids = sample_noise_items(n_neg,
                                    H,
-                                   np.ravel(exp_w.todense()),
+                                   exp_w,
                                    item_scores,
                                    pos_ids)
 
@@ -684,7 +682,7 @@ def generate_user_instance(n_neg, H, edge_dist, bigrams, b=None,
                                  for (s, t) in bigrams])
 
     # 4. Compute the importance weights for noise samples
-    noise_weights = np.sum(np.asarray([[(H[i] * bg.T).todense()
+    noise_weights = np.sum(np.asarray([[(H[i] * bg.T)
                                         for i in noise_ids]
                                        for bg in bigram_weights]),
                            axis=0).ravel()
@@ -699,7 +697,7 @@ def generate_user_instance(n_neg, H, edge_dist, bigrams, b=None,
     # The remaining examples get noise weights
     weights[len(pos_ids):] = noise_weights
 
-    ids = np.concatenate([pos_ids, noise_ids])
+    ids = np.concatenate([pos_ids, noise_ids]).astype(np.int)
 
     return y, weights, ids
 
@@ -709,7 +707,13 @@ def edge_user_weights(H, H_T, u, idx, v, b, bigrams):
     '''Compute the edge weights and transition statistics for a user.'''
 
     # First, compute the user-item affinities
-    item_scores = v.dot(u[idx]) + b
+    item_scores = np.zeros(H.shape[0])
+    if u is not None and v is not None:
+        item_scores += v.dot(u[idx])
+    if b is not None:
+        item_scores += b
+
+    item_scores = np.exp(item_scores)
 
     # Now aggregate by edge
     edge_scores = (H_T * item_scores)**(-1.0)
