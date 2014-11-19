@@ -697,10 +697,10 @@ def sample_noise_items(n_neg, H, edge_dist, b, y_pos):
 
         item_dist_norm = np.sum(item_dist)
 
-        if not item_dist_norm:
-            break
-
         item_dist /= item_dist_norm
+
+        if not np.all(np.isfinite(item_dist)):
+            break
 
         while True:
             new_item = categorical(item_dist)
