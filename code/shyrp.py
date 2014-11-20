@@ -15,8 +15,12 @@ from sklearn.base import BaseEstimator
 
 _EXP_BOUND = 20.0
 _MIN_VAL = 1e-10
-_RHO_SCALE = 1.5
-_RHO_MAX = 1e0
+_RHO_SCALE = 3
+_RHO_MAX = 1e6
+_RHO_MIN = 1e-6
+_MAX_RATIO = 1e1
+_ABS_TOL = 1e-4
+_REL_TOL = 1e-3
 
 L = logging.getLogger(__name__)
 
@@ -296,11 +300,13 @@ class PlaylistModel(BaseEstimator):
         b = self.b_.copy()
 
         tic = time.time()
+        n_variables = 0
         for sp in subproblems:
             ids_i = sp[-1]
             counts[ids_i] += 1.0
             duals.append(np.zeros(len(ids_i)))
             ci.append(np.take(b, ids_i))
+            n_variables += ci[-1].size
 
         # Initialize ADMM parameters
 
@@ -308,7 +314,8 @@ class PlaylistModel(BaseEstimator):
 
         for step in range(self.max_admm_iter):
             tic = time.time()
-            ci = Parallel(n_jobs=self.n_jobs, max_nbytes=self.max_nbytes)(delayed(item_bias_optimize)(i,
+            ci = Parallel(n_jobs=self.n_jobs,
+                              max_nbytes=self.max_nbytes)(delayed(item_bias_optimize)(i,
                                                                           subproblems[i][0],
                                                                           subproblems[i][1],
                                                                           subproblems[i][2],
@@ -325,9 +332,10 @@ class PlaylistModel(BaseEstimator):
                     len(subproblems),
                     toc - tic)
 
-            # Kill the old b
+            # Gather solutions
+            b_old = b
             tic = time.time()
-            b.fill(0.0)
+            b = np.zeros_like(b_old)
             for sp_i, c_i, d_i in zip(subproblems, ci, duals):
                 ids_i = sp_i[-1]
                 b[ids_i] += c_i + d_i
@@ -343,18 +351,62 @@ class PlaylistModel(BaseEstimator):
                     toc - tic)
 
             # Update the residuals
+            err_primal = 0.0
+            err_dual = 0.0
+
+            norm_primal = 0.0
+            norm_dual = 0.0
+
             tic = time.time()
             for sp_i, c_i, d_i in zip(subproblems, ci, duals):
                 ids_i = sp_i[-1]
-                d_i[:] = d_i + c_i - np.take(b, ids_i)
+
+                err = c_i - np.take(b, ids_i)
+
+                err_primal += np.sum(err**2)
+                norm_primal += np.sum(c_i**2)
+
+                d_i[:] = d_i + err
+                norm_dual += np.sum(d_i**2)
+
             toc = time.time()
+
             L.debug('  [BIAS] [%3d/%3d] Updated %d residuals in %.3f seconds',
                     step,
                     self.max_admm_iter,
                     len(subproblems),
                     toc - tic)
 
-            rho = min(_RHO_MAX, rho * _RHO_SCALE)
+            norm_primal = np.sqrt(norm_primal)
+            norm_dual = np.sqrt(norm_dual)
+            err_primal = np.sqrt(err_primal)
+            err_dual = np.sqrt(err_dual)
+
+            # Convergence and scaling check
+            eps_primal = n_variables * _ABS_TOL + _REL_TOL * norm_primal
+            eps_dual = n_variables * _ABS_TOL + _REL_TOL * norm_dual
+
+            if err_primal <= eps_primal and err_dual <= eps_dual:
+                L.debug('  [BIAS] [%3d/%3d] Converged',
+                    step,
+                    self.max_admm_iter)
+                break
+
+            if err_primal > _MAX_RATIO * err_dual and rho * _RHO_SCALE <= _RHO_MAX:
+                L.debug('  [BIAS] [%3d/%3d] Scaling up rho',
+                    step,
+                    self.max_admm_iter)
+                rho = rho * _RHO_SCALE
+                for d_i in duals:
+                    d_i[:] /= _RHO_SCALE
+
+            elif err_dual > _MAX_RATIO * err_primal and rho >= _RHO_MIN * _RHO_SCALE:
+                L.debug('  [BIAS] [%3d/%3d] Scaling down rho',
+                    step,
+                    self.max_admm_iter)
+                rho = rho / _RHO_SCALE
+                for d_i in duals:
+                    d_i[:] *= _RHO_SCALE
 
         # Save the results
         self.b_[:] = b
