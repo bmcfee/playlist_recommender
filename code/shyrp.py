@@ -15,6 +15,8 @@ from sklearn.base import BaseEstimator
 
 _EXP_BOUND = 20.0
 _MIN_VAL = 1e-10
+_RHO_SCALE = 1.5
+_RHO_MAX = 1e0
 
 L = logging.getLogger(__name__)
 
@@ -23,9 +25,9 @@ class PlaylistModel(BaseEstimator):
     '''Personalized hypergraph random walk playlist model'''
 
     def __init__(self,
-                 n_factors=8, edge_reg=1e-2, bias_reg=1e-2, user_reg=1e-6,
+                 n_factors=8, edge_reg=1e-2, bias_reg=1e-2, user_reg=1e-2,
                  song_reg=1e-2, max_iter=10, edge_init=None, bias_init=None,
-                 user_norm=True,
+                 user_norm=False,
                  user_init=None, song_init=None, params='ebus', n_neg=16,
                  max_admm_iter=50,
                  n_jobs=1,
@@ -223,7 +225,6 @@ class PlaylistModel(BaseEstimator):
                                                                             self.u_,
                                                                             V,
                                                                             self.b_)
-#                                                                             Aout=Ai[i])
                                               for i in range(len(subproblems)))
             toc = time.time()
             L.debug('  [SONG] [%3d/%3d] Solved %d subproblems in %.3f seconds',
@@ -262,6 +263,8 @@ class PlaylistModel(BaseEstimator):
                     self.max_admm_iter,
                     len(subproblems),
                     toc - tic)
+
+            rho = min(_RHO_MAX, rho * _RHO_SCALE)
 
         self.v_[:] = V
 
@@ -314,7 +317,6 @@ class PlaylistModel(BaseEstimator):
                                                                           self.u_,
                                                                           self.v_,
                                                                           b)
-#                                                                           Cout=ci[i])
                                               for i in range(len(subproblems)))
             toc = time.time()
             L.debug('  [BIAS] [%3d/%3d] Solved %d subproblems in %.3f seconds',
@@ -351,6 +353,8 @@ class PlaylistModel(BaseEstimator):
                     self.max_admm_iter,
                     len(subproblems),
                     toc - tic)
+
+            rho = min(_RHO_MAX, rho * _RHO_SCALE)
 
         # Save the results
         self.b_[:] = b
@@ -411,7 +415,9 @@ class PlaylistModel(BaseEstimator):
                                                           bounds=bounds)
 
         # Ensure that convergence happened correctly
-        assert diag['warnflag'] == 0
+        if diag['warnflag'] != 0:
+            L.error('Failed convergence in edge optimization: %s', repr(diag))
+            raise RuntimeError(diag['task'])
 
         self.w_[:] = w_opt
 
@@ -902,7 +908,9 @@ def item_factor_optimize(i, y, weights, ids, dual, rho, U_, V_, b_,
     a_opt, value, diagnostic = scipy.optimize.fmin_l_bfgs_b(__item_obj, a0)
 
     # Ensure that convergence happened correctly
-    assert diagnostic['warnflag'] == 0
+    if diagnostic['warnflag'] != 0:
+        L.error('Failed convergence in item optimization')
+        raise RuntimeError(diagnostic['task'])
 
     # Reshape the solution
     a_opt.shape = V.shape
@@ -955,7 +963,10 @@ def item_bias_optimize(i, y, weights, ids, dual, rho, U_, V_, b_, Cout=None):
 
     c_opt, value, diagnostic = scipy.optimize.fmin_l_bfgs_b(__bias_obj, c0)
 
-    assert diagnostic['warnflag'] == 0
+    if diagnostic['warnflag'] != 0:
+        L.error('Failed convergence in bias optimization')
+        raise RuntimeError(diagnostic['task'])
+
 
     if Cout is not None:
         Cout[:] = c_opt
@@ -1064,7 +1075,9 @@ def user_optimize_objective(reg, v, b, y, omega, user_norm, u0=None):
     u_opt, value, diagnostic = scipy.optimize.fmin_l_bfgs_b(__user_obj, u0)
 
     # Ensure that convergence happened correctly
-    assert diagnostic['warnflag'] == 0
+    if diagnostic['warnflag'] != 0:
+        L.error('Failed convergence in user optimization')
+        raise RuntimeError(diagnostic['task'])
 
     u_z = np.sqrt(np.sum(u_opt**2))
 
