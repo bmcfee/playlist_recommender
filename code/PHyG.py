@@ -681,42 +681,33 @@ def sample_noise_items(n_neg, H, edge_dist, b, y_pos):
     forbidding observed samples y_pos.
     '''
 
-    y_forbidden = set(y_pos)
+    # P(t) = sum_e P(t|e) P(e)
+    # P(t | e) = item_score[t] / edge_score[e]
+    y_pos = list(set(y_pos))
 
-    edge_dist = np.asarray(edge_dist / edge_dist.sum())
+    n_items = H.shape[0]
 
-    # Our item distribution will be softmax over bias, ignoring the user factor
-    full_item_dist = np.exp(b)
+    # First, construct the item scores
+    item_dist = np.exp(b)
+    item_dist[y_pos] = 0.0
 
-    # Knock out forbidden items
-    full_item_dist[list(y_forbidden)] = 0.0
+    # Normalize the edge distribution
+    edge_dist = edge_dist / np.sum(edge_dist)
 
-    noise_ids = []
+    # Marginalize over the edges
+    sampling_dist = np.ravel(item_dist * (H * edge_dist))
+    sampling_dist /= np.sum(sampling_dist)
 
-    while len(noise_ids) < n_neg:
-        # Sample an edge
-        edge_id = categorical(edge_dist)
+    # Cut the noise ids down to feasibility
+    n_neg = max(0, min(n_neg, n_items - len(y_pos)))
 
-        item_dist = np.ravel(H[:, edge_id].T.multiply(full_item_dist))
+    # Sample without replacement
+    noise_ids = np.random.choice(range(n_items),
+                                 size=n_neg,
+                                 replace=False,
+                                 p=sampling_dist)
 
-        item_dist_norm = np.sum(item_dist)
-
-        item_dist /= item_dist_norm
-
-        if not np.all(np.isfinite(item_dist)):
-            break
-
-        while True:
-            new_item = categorical(item_dist)
-
-            if new_item not in y_forbidden:
-                break
-
-        y_forbidden.add(new_item)
-        noise_ids.append(new_item)
-        full_item_dist[new_item] = 0.0
-
-    return noise_ids
+    return list(noise_ids)
 
 
 def generate_user_instance(n_neg, H, exp_w, bigrams, b=None,
