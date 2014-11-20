@@ -555,8 +555,32 @@ class PlaylistModel(BaseEstimator):
 
         return playlist, edges
 
-    def loglikelihood(self, playlist, user_id=None, user_num=None,
-                      normalize=False):
+    def loglikelihood(self, playlists, normalize=False):
+        '''Compute the average log-likelihood of a collection of playlists.
+
+        :parameters:
+            - playlists : dict : user_d -> playlist array
+              See fit()
+
+            - normalize : bool
+              If true, normalize each playlist by its length
+
+        '''
+
+        ll = 0.0
+        num_playlists = 0
+
+        for user_id, user_playlists in playlists.iteritems():
+            for pl in user_playlists:
+                ll += self.example_loglikelihood(pl,
+                                                 user_id=user_id,
+                                                 normalize=normalize)
+                num_playlists += 1
+
+        return ll / num_playlists
+
+    def example_loglikelihood(self, playlist, user_id=None, user_num=None,
+                              normalize=False):
         '''Compute the log-likelihood of a single playlist.
 
         :parameters:
