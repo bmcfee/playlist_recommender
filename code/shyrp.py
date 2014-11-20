@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""(P)ersonalized (Hy)pergraph (P)laylist model"""
+"""stochastic hypergraph recommended playlists"""
 
 import numpy as np
 import scipy.sparse
