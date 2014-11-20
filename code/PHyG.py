@@ -14,6 +14,7 @@ from joblib import Parallel, delayed
 from sklearn.base import BaseEstimator
 
 _EXP_BOUND = 20.0
+_MIN_VAL = 1e-10
 
 L = logging.getLogger(__name__)
 
@@ -21,14 +22,16 @@ L = logging.getLogger(__name__)
 class PlaylistModel(BaseEstimator):
     '''Personalized hypergraph random walk playlist model'''
 
-    def __init__(self, n_factors=8, edge_reg=1.0, bias_reg=1.0, user_reg=1.0,
-                 song_reg=1.0, max_iter=10, edge_init=None, bias_init=None,
+    def __init__(self,
+                 n_factors=8, edge_reg=1e-2, bias_reg=1e-2, user_reg=1e-6,
+                 song_reg=1e-2, max_iter=10, edge_init=None, bias_init=None,
                  user_norm=True,
-                 user_init=None, song_init=None, params='ebus', n_neg=64,
+                 user_init=None, song_init=None, params='ebus', n_neg=16,
                  max_admm_iter=50,
                  n_jobs=1,
                  verbose=0,
-                 max_nbytes=1e6):
+                 max_nbytes=1e6,
+                 callback=None):
         """Initialize a personalized playlist model
 
         :parameters:
@@ -85,6 +88,12 @@ class PlaylistModel(BaseEstimator):
          - verbose : int >= 0
             Verbosity (logging) level
 
+         - callback : None or callable
+            An optional function to call after each iteration
+            This can be used for validation or versioning.
+
+            Signature:
+            callback(model_object)
 
         """
 
@@ -114,6 +123,7 @@ class PlaylistModel(BaseEstimator):
         self.user_norm = user_norm
         self.verbose = verbose
         self.max_nbytes = max_nbytes
+        self.callback = callback
 
         L.setLevel(self.verbose)
 
@@ -468,6 +478,11 @@ class PlaylistModel(BaseEstimator):
                        iteration, self.max_iter)
                 self._fit_songs(bigrams)
 
+            self.iteration_ = iteration
+
+            if hasattr(self.callback, '__call__'):
+                self.callback(self)
+
         L.info('Done.')
 
     def sample(self, user_id=None, user_factor=None,
@@ -701,7 +716,7 @@ def sample_noise_items(n_neg, H, edge_dist, b, y_pos):
 
     # And compute per-edge mass normalizations
     edge_z = item_dist * H
-    edge_z[edge_z == 0] = 1e-10
+    edge_z[edge_z == 0] = _MIN_VAL
 
     # Marginalize over the edges
     sampling_dist = np.ravel(item_dist * (H * (edge_dist / edge_z)))
@@ -1029,7 +1044,7 @@ def user_optimize_objective(reg, v, b, y, omega, user_norm, u0=None):
 
     u_z = np.sqrt(np.sum(u_opt**2))
 
-    if user_norm and u_z > 1e-10:
+    if user_norm and u_z > _MIN_VAL:
         u_opt /= u_z
 
     return u_opt
