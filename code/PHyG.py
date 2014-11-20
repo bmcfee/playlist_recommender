@@ -23,11 +23,12 @@ class PlaylistModel(BaseEstimator):
 
     def __init__(self, n_factors=8, edge_reg=1.0, bias_reg=1.0, user_reg=1.0,
                  song_reg=1.0, max_iter=10, edge_init=None, bias_init=None,
+                 user_norm=True,
                  user_init=None, song_init=None, params='ebus', n_neg=64,
                  max_admm_iter=50,
                  n_jobs=1,
                  verbose=0,
-                 memory=None):
+                 max_nbytes=1e6):
         """Initialize a personalized playlist model
 
         :parameters:
@@ -61,6 +62,9 @@ class PlaylistModel(BaseEstimator):
          - song_init : None or ndarray, shape=(n_songs, n_factors)
             Initial value of song latent factor matrix
 
+         - user_norm: bool
+            If true, user factors are normalized to unit length.
+
          - params : str
             Which parameters to fit:
             - 'e' : edge weights
@@ -81,8 +85,6 @@ class PlaylistModel(BaseEstimator):
          - verbose : int >= 0
             Verbosity (logging) level
 
-         - memory : None or joblib.Memory
-            optional memory cache object
 
         """
 
@@ -109,7 +111,9 @@ class PlaylistModel(BaseEstimator):
         self.user_reg = user_reg
         self.song_reg = song_reg
 
+        self.user_norm = user_norm
         self.verbose = verbose
+        self.max_nbytes = max_nbytes
 
         L.setLevel(self.verbose)
 
@@ -123,13 +127,14 @@ class PlaylistModel(BaseEstimator):
         # Solve over all users in parallel
         tic = time.time()
         exp_w = np.exp(self.w_)
-        self.u_[:] = Parallel(n_jobs=self.n_jobs)(delayed(user_problem)(self.n_neg,
+        self.u_[:] = Parallel(n_jobs=self.n_jobs, max_nbytes=self.max_nbytes)(delayed(user_problem)(self.n_neg,
                                                                         self.H_,
                                                                         exp_w,
                                                                         self.user_reg,
                                                                         self.v_,
                                                                         self.b_,
-                                                                        y)
+                                                                        y,
+                                                                        self.user_norm)
                                                   for y in bigrams)
         toc = time.time()
         L.debug('  [USER] Fit %d user factors in %.3f seconds',
@@ -150,7 +155,7 @@ class PlaylistModel(BaseEstimator):
         exp_w = np.exp(self.w_)
 
         tic = time.time()
-        subproblems = Parallel(n_jobs=self.n_jobs)(delayed(generate_user_instance)(self.n_neg,
+        subproblems = Parallel(n_jobs=self.n_jobs, max_nbytes=self.max_nbytes)(delayed(generate_user_instance)(self.n_neg,
                                                                                    self.H_,
                                                                                    exp_w,
                                                                                    y,
@@ -199,7 +204,7 @@ class PlaylistModel(BaseEstimator):
 
         for step in range(self.max_admm_iter):
             tic = time.time()
-            Ai = Parallel(n_jobs=self.n_jobs)(delayed(item_factor_optimize)(i,
+            Ai = Parallel(n_jobs=self.n_jobs, max_nbytes=self.max_nbytes)(delayed(item_factor_optimize)(i,
                                                                             subproblems[i][0],
                                                                             subproblems[i][1],
                                                                             subproblems[i][2],
@@ -207,8 +212,8 @@ class PlaylistModel(BaseEstimator):
                                                                             rho,
                                                                             self.u_,
                                                                             V,
-                                                                            self.b_,
-                                                                            Aout=Ai[i])
+                                                                            self.b_)
+#                                                                             Aout=Ai[i])
                                               for i in range(len(subproblems)))
             toc = time.time()
             L.debug('  [SONG] [%3d/%3d] Solved %d subproblems in %.3f seconds',
@@ -257,7 +262,7 @@ class PlaylistModel(BaseEstimator):
         exp_w = np.exp(self.w_)
         # Generate the sub-problem instances
         tic = time.time()
-        subproblems = Parallel(n_jobs=self.n_jobs)(delayed(generate_user_instance)(self.n_neg,
+        subproblems = Parallel(n_jobs=self.n_jobs, max_nbytes=self.max_nbytes)(delayed(generate_user_instance)(self.n_neg,
                                                                                    self.H_,
                                                                                    exp_w,
                                                                                    y,
@@ -290,7 +295,7 @@ class PlaylistModel(BaseEstimator):
 
         for step in range(self.max_admm_iter):
             tic = time.time()
-            ci = Parallel(n_jobs=self.n_jobs)(delayed(item_bias_optimize)(i,
+            ci = Parallel(n_jobs=self.n_jobs, max_nbytes=self.max_nbytes)(delayed(item_bias_optimize)(i,
                                                                           subproblems[i][0],
                                                                           subproblems[i][1],
                                                                           subproblems[i][2],
@@ -298,8 +303,8 @@ class PlaylistModel(BaseEstimator):
                                                                           rho,
                                                                           self.u_,
                                                                           self.v_,
-                                                                          b,
-                                                                          Cout=ci[i])
+                                                                          b)
+#                                                                           Cout=ci[i])
                                               for i in range(len(subproblems)))
             toc = time.time()
             L.debug('  [BIAS] [%3d/%3d] Solved %d subproblems in %.3f seconds',
@@ -353,7 +358,7 @@ class PlaylistModel(BaseEstimator):
         num_playlists = 0
 
         # Scatter-gather the bigram statistics over all users
-        for Z_i, nu_i, np_i in Parallel(n_jobs=self.n_jobs)(delayed(edge_user_weights)(self.H_,
+        for Z_i, nu_i, np_i in Parallel(n_jobs=self.n_jobs, max_nbytes=self.max_nbytes)(delayed(edge_user_weights)(self.H_,
                                                                     self.H_T_,
                                                                     self.u_,
                                                                     idx,
@@ -694,8 +699,12 @@ def sample_noise_items(n_neg, H, edge_dist, b, y_pos):
     # Normalize the edge distribution
     edge_dist = edge_dist / np.sum(edge_dist)
 
+    # And compute per-edge mass normalizations
+    edge_z = item_dist * H
+    edge_z[edge_z == 0] = 1e-10
+
     # Marginalize over the edges
-    sampling_dist = np.ravel(item_dist * (H * edge_dist))
+    sampling_dist = np.ravel(item_dist * (H * (edge_dist / edge_z)))
     sampling_dist /= np.sum(sampling_dist)
 
     # Cut the noise ids down to feasibility
@@ -918,7 +927,7 @@ def item_bias_optimize(i, y, weights, ids, dual, rho, U_, V_, b_, Cout=None):
 
 
 # user optimization
-def user_problem(n_noise, H, exp_w, reg, v, b, bigrams, u0=None):
+def user_problem(n_noise, H, exp_w, reg, v, b, bigrams, user_norm, u0=None):
     '''Optimize a user's latent factor representation
 
     :parameters:
@@ -958,10 +967,11 @@ def user_problem(n_noise, H, exp_w, reg, v, b, bigrams, u0=None):
                                    np.take(b, ids),
                                    y,
                                    weights,
+                                   user_norm,
                                    u0=u0)
 
 
-def user_optimize_objective(reg, v, b, y, omega, u0=None):
+def user_optimize_objective(reg, v, b, y, omega, user_norm, u0=None):
     '''Optimize a user vector from a sample of positive and noise items
 
     :parameters:
@@ -1016,5 +1026,10 @@ def user_optimize_objective(reg, v, b, y, omega, u0=None):
 
     # Ensure that convergence happened correctly
     assert diagnostic['warnflag'] == 0
+
+    u_z = np.sqrt(np.sum(u_opt**2))
+
+    if user_norm and u_z > 1e-10:
+        u_opt /= u_z
 
     return u_opt
