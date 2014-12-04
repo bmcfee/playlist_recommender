@@ -318,7 +318,7 @@ class PlaylistModel(BaseEstimator):
                 list of edge selections corresponding to selected tracks
         '''
 
-        item_scores = np.zeros(self.H_.shape[0])
+        item_scores = np.zeros(self.H.shape[0])
 
         if self.n_factors > 0:
             if user_factor is None:
@@ -326,12 +326,12 @@ class PlaylistModel(BaseEstimator):
                 user_factor = np.zeros(self.n_factors)
 
                 if user_id in self.user_map_:
-                    user_factor = self.u_[self.user_map_[user_id]]
+                    user_factor = self.U_[self.user_map_[user_id]]
                 else:
                     raise ValueError('Unknown user_id: {0}'.format(user_id))
 
             # Score the items
-            item_scores = self.v_.dot(user_factor)
+            item_scores = self.V_.dot(user_factor)
 
         if self.b_ is not None:
             item_scores += self.b_
@@ -345,7 +345,7 @@ class PlaylistModel(BaseEstimator):
         else:
             if song_init is not None:
                 # Draw the initial edge from the song-conditional distribution
-                edge = categorical(self.H_[song_init].multiply(expw))
+                edge = categorical(self.H[song_init].multiply(expw))
             else:
                 # Draw the initial edge from the song-conditional distribution
                 edge = categorical(expw)
@@ -355,13 +355,13 @@ class PlaylistModel(BaseEstimator):
 
         for _ in range(n_songs):
             # Pick a song from the current edge
-            song = categorical(self.H_T_[edge].multiply(item_scores))
+            song = categorical(self.H.T[edge].multiply(item_scores))
 
             playlist.append(song)
             edges.append(edge)
 
             # Pick an edge from the current song
-            edge = categorical(self.H_[song].multiply(expw))
+            edge = categorical(self.H[song].multiply(expw))
 
         return playlist, edges
 
@@ -419,13 +419,13 @@ class PlaylistModel(BaseEstimator):
             user_num = self.user_map_[user_id]
 
         if user_num is not None:
-            user_factor = self.u_[user_num]
+            user_factor = self.U_[user_num]
 
         # Score the items
-        item_scores = np.zeros(self.H_.shape[0])
+        item_scores = np.zeros(self.H.shape[0])
 
         if self.v_ is not None:
-            item_scores += self.v_.dot(user_factor)
+            item_scores += self.V_.dot(user_factor)
 
         if self.b_ is not None:
             item_scores += self.b_
@@ -447,13 +447,13 @@ class PlaylistModel(BaseEstimator):
                 p_e_s = edge_scores
             else:
                 # Only edges touching s are valid
-                p_e_s = self.H_[s].multiply(edge_scores)
+                p_e_s = self.H[s].multiply(edge_scores)
 
             # Normalize to form a distribution
             p_e_s = np.ravel(p_e_s) / np.sum(p_e_s)
 
             # Compute P(t | e) = score(t) / sum(score(j) | j in E)
-            edge_mass = self.H_T_ * item_scores
+            edge_mass = self.H.T * item_scores
             p_t_e = item_scores[t] / edge_mass
 
             # Compute P(t | s) = P(t | e) P(e | s)
