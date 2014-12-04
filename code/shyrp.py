@@ -163,7 +163,7 @@ class PlaylistModel(BaseEstimator):
 
         # Initialize the song factors
         if song_init is None:
-            song_init = np.zeros((self.n_songs, self.n_factors), dtype=dtype)
+            song_init = np.random.randn(self.n_songs, self.n_factors).astype(dtype)
         else:
             assert np.allclose(song_init.shape, (self.n_songs, self.n_factors))
             song_init = song_init.astype(dtype)
