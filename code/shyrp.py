@@ -2,25 +2,19 @@
 """stochastic hypergraph recommended playlists"""
 
 import numpy as np
-import scipy.sparse
-import scipy.optimize
-import scipy.misc
 
 import logging
-import time
 
-from joblib import Parallel, delayed
+import theano
+import theano.tensor as T
+import theano.sparse as ts
+
+import nntools
 
 from sklearn.base import BaseEstimator
 
-_EXP_BOUND = 20.0
-_MIN_VAL = 1e-10
-_RHO_SCALE = 3.0
-_RHO_MAX = 1e6
-_RHO_MIN = 1e-6
-_MAX_RATIO = 1e1
-_ABS_TOL = 1e-4
-_REL_TOL = 1e-3
+# Prevent numerical underflow
+__EPS = 1e-8
 
 L = logging.getLogger(__name__)
 
@@ -28,19 +22,22 @@ L = logging.getLogger(__name__)
 class PlaylistModel(BaseEstimator):
     '''Personalized hypergraph random walk playlist model'''
 
-    def __init__(self,
-                 n_factors=8, edge_reg=1e-2, bias_reg=1e-2, user_reg=1e-2,
-                 song_reg=1e-2, max_iter=10, edge_init=None, bias_init=None,
-                 user_norm=False,
-                 user_init=None, song_init=None, params='ebus', n_neg=16,
-                 max_admm_iter=50,
-                 n_jobs=1,
-                 verbose=0,
-                 max_nbytes=1e6,
+    def __init__(self, H, n_users,
+                 n_factors=4, edge_reg=1e-3, bias_reg=1e-3, user_reg=1e-3,
+                 song_reg=1e-3, n_epochs=10, batch_size=512,
+                 edge_init=None, bias_init=None,
+                 user_init=None, song_init=None,
+                 params='ebus', verbose=0,
                  callback=None):
         """Initialize a personalized playlist model
 
         :parameters:
+         - H : scipy.sparse matrix [shape=(n_songs, n_edges)]
+            Hypergraph edge-incidence matrix
+
+         - n_users : int > 0
+            Number of users in the model
+
          - n_factors : int >= 0
             Number of latent factors in the personalized model
 
@@ -56,8 +53,11 @@ class PlaylistModel(BaseEstimator):
          - song_reg : float > 0
             Variance reg on song latent factors
 
-         - max_iter : int > 0
+         - n_epochs: int > 0
             Number of optimization steps
+
+         - batch_size: int > 0
+            Number of examples to use in each training batch
 
          - edge_init : ndarray shape=(n_features,) or None
             Initial value of edge weight vector
@@ -71,25 +71,12 @@ class PlaylistModel(BaseEstimator):
          - song_init : None or ndarray, shape=(n_songs, n_factors)
             Initial value of song latent factor matrix
 
-         - user_norm: bool
-            If true, user factors are normalized to unit length.
-
          - params : str
             Which parameters to fit:
             - 'e' : edge weights
             - 'b' : song bias
             - 'u' : users
             - 's' : songs
-
-         - n_neg : int > 0
-            Number of negative examples to draw for each user sub-problem.
-
-         - max_admm_iter : int > 0
-            Maximum number of ADMM iterations to run in the inner loop.
-            Set to np.inf for full convergence tests.
-
-         - n_jobs : int
-            Maximum number of jobs to run in parallel
 
          - verbose : int >= 0
             Verbosity (logging) level
@@ -100,7 +87,6 @@ class PlaylistModel(BaseEstimator):
 
             Signature:
             callback(model_object)
-
         """
 
         # If we don't learn latent factors,
@@ -108,30 +94,16 @@ class PlaylistModel(BaseEstimator):
         if 'u' not in params and 's' not in params:
             n_factors = 1
 
-        self.max_iter = max_iter
-        self.max_admm_iter = max_admm_iter
-        self.n_jobs = n_jobs
+        # Stash the hypergraph as CSR
+        self.H = H.tocsr().astype(theano.config.floatX)
+
+        self.n_users = n_users
+
+        self.n_epochs = n_epochs
+        self.batch_size = batch_size
 
         self.params = params
         self.n_factors = n_factors
-        self.n_neg = n_neg
-
-        self.w_ = edge_init
-        self.b_ = bias_init
-        self.u_ = user_init
-        self.v_ = song_init
-
-        self.edge_reg = edge_reg
-        self.bias_reg = bias_reg
-        self.user_reg = user_reg
-        self.song_reg = song_reg
-
-        self.user_norm = user_norm
-        self.verbose = verbose
-        self.max_nbytes = max_nbytes
-        self.callback = callback
-
-        L.setLevel(self.verbose)
 
         if user_init is not None:
             self.n_factors = user_init.shape[1]
@@ -139,386 +111,66 @@ class PlaylistModel(BaseEstimator):
         if song_init is not None:
             self.n_factors = song_init.shape[1]
 
-    def _fit_users(self, bigrams):
-        # Solve over all users in parallel
-        tic = time.time()
-        exp_w = np.exp(self.w_)
-        self.u_[:] = Parallel(n_jobs=self.n_jobs, max_nbytes=self.max_nbytes)(delayed(user_problem)(self.n_neg,
-                                                                        self.H_,
-                                                                        exp_w,
-                                                                        self.user_reg,
-                                                                        self.v_,
-                                                                        self.b_,
-                                                                        y,
-                                                                        self.user_norm)
-                                                  for y in bigrams)
-        toc = time.time()
-        L.debug('  [USER] Fit %d user factors in %.3f seconds',
-                len(self.u_),
-                toc - tic)
+        self.edge_reg = edge_reg
+        self.bias_reg = bias_reg
+        self.user_reg = user_reg
+        self.song_reg = song_reg
 
-    def _fit_songs(self, bigrams):
+        self.verbose = verbose
+        self.callback = callback
 
-        # 1. generate noise instances:
-        #   for each user subproblem, we need:
-        #       y[i]        # pos/neg labels for each of ids_i
-        #       weights[i]  # importance weights for each of ids_i
-        #       ids[i]      # indices of items for this subproblem
-        #
+        L.setLevel(self.verbose)
 
-        n_songs = self.H_.shape[0]
+        self.init_variables(edge_init,
+                            bias_init,
+                            user_init,
+                            song_init)
 
-        exp_w = np.exp(self.w_)
+        self.init_functions()
 
-        tic = time.time()
-        subproblems = Parallel(n_jobs=self.n_jobs, max_nbytes=self.max_nbytes)(delayed(generate_user_instance)(self.n_neg,
-                                                                                   self.H_,
-                                                                                   exp_w,
-                                                                                   y,
-                                                                                   b=self.b_)
-                                                   for y in bigrams)
+    def init_variables(self, edge_init, bias_init, user_init, song_init):
+        '''Construct theano shared variables'''
 
-        # 2. collect usage statistics over subproblems
-        #       Z[i] = count subproblems using item i
-        #
+        self.n_songs, self.n_edges = self.H.shape
+        dtype = theano.config.floatX
 
-        counts = np.zeros(n_songs)
-        duals = []
-        Ai = []
+        # Initialize the edge weights
+        if edge_init is None:
+            edge_init = np.zeros(self.n_edges, dtype=dtype)
+        else:
+            assert len(edge_init) == self.n_edges
+            edge_init = edge_init.astype(dtype)
 
-        V = self.v_.copy()
-        n_variables = 0
+        self._w = theano.shared(edge_init, name='w')
 
-        for sp in subproblems:
-            ids_i = sp[-1]
-            counts[ids_i] += 1.0
-            duals.append(np.zeros((len(ids_i), self.n_factors)))
-            Ai.append(np.take(V, ids_i, axis=0))
-            n_variables += Ai[-1].size
+        # Initialize the bias term
+        if bias_init is None:
+            bias_init = np.zeros(self.n_songs, dtype=dtype)
+        else:
+            assert len(bias_init) == self.n_songs
+            bias_init = bias_init.astype(dtype)
 
-        toc = time.time()
-        L.debug('  [SONG] Initialized %d subproblems in %.3f seconds',
-                len(subproblems),
-                toc - tic)
+        self._b = theano.shared(bias_init, name='b')
 
-        # 3. initialize ADMM parameters
-        #   a. V <- self.v_
-        #   b. Lambda[i] = np.zeros( (len(ids_i), self.n_factors) )
-        #   c. rho = rho_init
-        #
+        # Initialize the user factors
+        if user_init is None:
+            user_init = np.zeros((self.n_users, self.n_factors), dtype=dtype)
+        else:
+            assert np.allclose(user_init.shape, (self.n_users, self.n_factors))
+            user_init = user_init.astype(dtype)
 
-        rho = 1.0
+        self._U = theano.shared(user_init, name='U')
 
-        # 4. ADMM loop
-        #   a. [parallel] solve each user problem:
-        #           (i, S[i], y[i], weights[i], Lambda[i], rho, U, V, b)
-        #
-        #           equivalently, pass ids, so that
-        #               S*V == V[ids] == np.take(V, ids, axis=0)
-        #           this buys about a 4x speedup
-        #
-        #           (i, y[i], weights[i], ids, Lambda[i], rho, U, V, b)
-        #
+        # Initialize the song factors
+        if song_init is None:
+            song_init = np.zeros((self.n_songs, self.n_factors), dtype=dtype)
+        else:
+            assert np.allclose(song_init.shape, (self.n_songs, self.n_factors))
+            song_init = song_init.astype(dtype)
 
-        for step in range(self.max_admm_iter):
-            tic = time.time()
-            Ai = Parallel(n_jobs=self.n_jobs, max_nbytes=self.max_nbytes)(delayed(item_factor_optimize)(i,
-                                                                            subproblems[i][0],
-                                                                            subproblems[i][1],
-                                                                            subproblems[i][2],
-                                                                            duals[i],
-                                                                            rho,
-                                                                            self.u_,
-                                                                            V,
-                                                                            self.b_)
-                                              for i in range(len(subproblems)))
-            toc = time.time()
-            L.debug('  [SONG] [%3d/%3d] Solved %d subproblems in %.3f seconds',
-                    step,
-                    self.max_admm_iter,
-                    len(subproblems),
-                    toc - tic)
+        self._V = theano.shared(song_init, name='V')
 
-            # Kill the old V
-            V_old = V
-            tic = time.time()
-            V = np.zeros_like(V_old)
-
-            for sp_i, a_i, d_i in zip(subproblems, Ai, duals):
-                ids_i = sp_i[-1]
-                V[ids_i, :] += (a_i + d_i)
-
-            # Compute the normalization factor
-            my_norm = 1.0/(counts + self.song_reg / rho)
-
-            # Broadcast the normalization
-            V[:] *= my_norm.reshape((-1, 1))
-
-            toc = time.time()
-            L.debug('  [SONG] [%3d/%3d] Gathered solutions in %.3f seconds',
-                    step,
-                    self.max_admm_iter,
-                    toc - tic)
-
-            # Update the residuals
-            err_primal = 0.0
-            err_dual = 0.0
-            norm_primal = 0.0
-            norm_dual = 0.0
-
-            tic = time.time()
-            for sp_i, a_i, d_i in zip(subproblems, Ai, duals):
-                ids_i = sp_i[-1]
-                err = a_i - np.take(V, ids_i, axis=0)
-
-                err_primal += np.sum(err**2)
-                norm_primal += np.sum(a_i**2)
-
-                d_i[:] = d_i + err
-                norm_dual += np.sum(d_i**2)
-            toc = time.time()
-
-            L.debug('  [SONG] [%3d/%3d] Updated %d residuals in %.3f seconds',
-                    step,
-                    self.max_admm_iter,
-                    len(subproblems),
-                    toc - tic)
-
-            norm_primal = np.sqrt(norm_primal)
-            norm_dual = np.sqrt(norm_dual)
-            err_primal = np.sqrt(err_primal)
-            err_dual = np.sqrt(err_dual)
-
-            # Convergence and scaling check
-            eps_primal = n_variables * _ABS_TOL + _REL_TOL * norm_primal
-            eps_dual = n_variables * _ABS_TOL + _REL_TOL * norm_dual
-
-            if err_primal <= eps_primal and err_dual <= eps_dual:
-                L.debug('  [SONG] [%3d/%3d] Converged',
-                    step,
-                    self.max_admm_iter)
-                break
-
-            if err_primal > _MAX_RATIO * eps_dual and rho * _RHO_SCALE <= _RHO_MAX:
-                L.debug('  [SONG] [%3d/%3d] Scaling up rho',
-                    step,
-                    self.max_admm_iter)
-                rho = rho * _RHO_SCALE
-                for d_i in duals:
-                    d_i[:] /= _RHO_SCALE
-
-            elif err_dual > _MAX_RATIO * err_primal and rho >= _RHO_MIN * _RHO_SCALE:
-                L.debug('  [SONG] [%3d/%3d] Scaling down rho',
-                    step,
-                    self.max_admm_iter)
-                rho = rho / _RHO_SCALE
-                for d_i in duals:
-                    d_i[:] *= _RHO_SCALE
-
-        self.v_[:] = V
-
-    def _fit_bias(self, bigrams):
-
-        n_songs = self.H_.shape[0]
-
-        exp_w = np.exp(self.w_)
-        # Generate the sub-problem instances
-        tic = time.time()
-        subproblems = Parallel(n_jobs=self.n_jobs, max_nbytes=self.max_nbytes)(delayed(generate_user_instance)(self.n_neg,
-                                                                                   self.H_,
-                                                                                   exp_w,
-                                                                                   y,
-                                                                                   U=self.u_,
-                                                                                   V=self.v_,
-                                                                                   user_id=i)
-                                                   for i, y in enumerate(bigrams))
-        toc = time.time()
-        L.debug('  [BIAS] Initialized %d subproblems in %.3f seconds',
-                len(subproblems),
-                toc - tic)
-
-        # Collect usage statistics over subproblems
-        counts = np.zeros(n_songs)
-        duals = []
-        ci = []
-
-        b = self.b_.copy()
-
-        tic = time.time()
-        n_variables = 0
-        for sp in subproblems:
-            ids_i = sp[-1]
-            counts[ids_i] += 1.0
-            duals.append(np.zeros(len(ids_i)))
-            ci.append(np.take(b, ids_i))
-            n_variables += ci[-1].size
-
-        # Initialize ADMM parameters
-
-        rho = 1.0
-
-        for step in range(self.max_admm_iter):
-            tic = time.time()
-            ci = Parallel(n_jobs=self.n_jobs,
-                              max_nbytes=self.max_nbytes)(delayed(item_bias_optimize)(i,
-                                                                          subproblems[i][0],
-                                                                          subproblems[i][1],
-                                                                          subproblems[i][2],
-                                                                          duals[i],
-                                                                          rho,
-                                                                          self.u_,
-                                                                          self.v_,
-                                                                          b)
-                                              for i in range(len(subproblems)))
-            toc = time.time()
-            L.debug('  [BIAS] [%3d/%3d] Solved %d subproblems in %.3f seconds',
-                    step,
-                    self.max_admm_iter,
-                    len(subproblems),
-                    toc - tic)
-
-            # Gather solutions
-            b_old = b
-            tic = time.time()
-            b = np.zeros_like(b_old)
-            for sp_i, c_i, d_i in zip(subproblems, ci, duals):
-                ids_i = sp_i[-1]
-                b[ids_i] += c_i + d_i
-
-            # Compute the normalization factor
-            my_norm = 1.0/(counts + self.bias_reg / rho)
-
-            b[:] = my_norm * b
-            toc = time.time()
-            L.debug('  [BIAS] [%3d/%3d] Gathered solutions in %.3f seconds',
-                    step,
-                    self.max_admm_iter,
-                    toc - tic)
-
-            # Update the residuals
-            err_primal = 0.0
-            err_dual = 0.0
-
-            norm_primal = 0.0
-            norm_dual = 0.0
-
-            tic = time.time()
-            for sp_i, c_i, d_i in zip(subproblems, ci, duals):
-                ids_i = sp_i[-1]
-
-                err = c_i - np.take(b, ids_i)
-
-                err_primal += np.sum(err**2)
-                norm_primal += np.sum(c_i**2)
-
-                d_i[:] = d_i + err
-                norm_dual += np.sum(d_i**2)
-
-            toc = time.time()
-
-            L.debug('  [BIAS] [%3d/%3d] Updated %d residuals in %.3f seconds',
-                    step,
-                    self.max_admm_iter,
-                    len(subproblems),
-                    toc - tic)
-
-            norm_primal = np.sqrt(norm_primal)
-            norm_dual = np.sqrt(norm_dual)
-            err_primal = np.sqrt(err_primal)
-            err_dual = np.sqrt(err_dual)
-
-            # Convergence and scaling check
-            eps_primal = n_variables * _ABS_TOL + _REL_TOL * norm_primal
-            eps_dual = n_variables * _ABS_TOL + _REL_TOL * norm_dual
-
-            if err_primal <= eps_primal and err_dual <= eps_dual:
-                L.debug('  [BIAS] [%3d/%3d] Converged',
-                    step,
-                    self.max_admm_iter)
-                break
-
-            if err_primal > _MAX_RATIO * eps_dual and rho * _RHO_SCALE <= _RHO_MAX:
-                L.debug('  [BIAS] [%3d/%3d] Scaling up rho',
-                    step,
-                    self.max_admm_iter)
-                rho = rho * _RHO_SCALE
-                for d_i in duals:
-                    d_i[:] /= _RHO_SCALE
-
-            elif err_dual > _MAX_RATIO * err_primal and rho >= _RHO_MIN * _RHO_SCALE:
-                L.debug('  [BIAS] [%3d/%3d] Scaling down rho',
-                    step,
-                    self.max_admm_iter)
-                rho = rho / _RHO_SCALE
-                for d_i in duals:
-                    d_i[:] *= _RHO_SCALE
-
-        # Save the results
-        self.b_[:] = b
-
-    def _fit_edges(self, bigrams):
-        '''Update the edge weights'''
-
-        # The edge weights
-        Z = 0
-
-        # num_usage[s] counts bigrams of the form (s, .)
-        num_usage = 0
-
-        # num_playlists counts all playlists
-        num_playlists = 0
-
-        # Scatter-gather the bigram statistics over all users
-        for Z_i, nu_i, np_i in Parallel(n_jobs=self.n_jobs, max_nbytes=self.max_nbytes)(delayed(edge_user_weights)(self.H_,
-                                                                    self.H_T_,
-                                                                    self.u_,
-                                                                    idx,
-                                                                    self.v_,
-                                                                    self.b_, y)
-                                         for (idx, y) in enumerate(bigrams)):
-            Z += Z_i
-            num_usage += nu_i
-            num_playlists += np_i
-
-        def __edge_objective(w):
-
-            obj = self.edge_reg * 0.5 * np.sum(w**2)
-            grad = self.edge_reg * w
-
-            obj += - Z.dot(w)
-            grad += -Z
-
-            lse_w = scipy.misc.logsumexp(w)
-            exp_w = np.exp(w)
-            Hexpw = self.H_.multiply(exp_w)
-
-            # Compute stable item-wise log-sum-exp slices
-            Hexpw_norm = np.empty_like(num_usage)
-            Hexpw_norm[:] = [scipy.misc.logsumexp(np.take(w, hid.indices))
-                             for hid in self.H_]
-
-            obj += num_usage.dot(Hexpw_norm) + num_playlists * lse_w
-
-            grad += np.ravel((num_usage * np.exp(-Hexpw_norm)).dot(Hexpw))
-            grad += exp_w * (num_playlists * np.exp(-lse_w))
-
-            return obj, grad
-
-        w0 = self.w_.copy()
-
-        bounds = [(-_EXP_BOUND, _EXP_BOUND)] * len(w0)
-        w_opt, value, diag = scipy.optimize.fmin_l_bfgs_b(__edge_objective,
-                                                          w0,
-                                                          bounds=bounds)
-
-        # Ensure that convergence happened correctly
-        if diag['warnflag'] != 0:
-            L.error('Failed convergence in edge optimization: %s', repr(diag))
-            raise RuntimeError(diag['task'])
-
-        self.w_[:] = w_opt
-
-    def fit(self, playlists, H):
+    def fit(self, playlists):
         '''fit the model.
 
         :parameters:
@@ -528,65 +180,114 @@ class PlaylistModel(BaseEstimator):
                 playlists = {'bm106': [ [23, 35, 41, 32, 39],
                                         [18, 19, 72, 4],
                                         [12, 9] ] }
-
-          - H : scipy.sparse.csr_matrix (n_songs, n_edges)
         '''
 
-        # Stash the hypergraph and its transpose
-        self.H_ = H.tocsr()
-        self.H_T_ = H.T.tocsr()
-
-        n_songs, n_edges = self.H_.shape
-
-        # Convert playlists to bigrams
-        self.user_map_, bigrams = make_bigrams_usermap(playlists)
-
-        # Initialize edge weights
-        if self.w_ is None:
-            self.w_ = np.zeros(n_edges)
-
-        if self.b_ is None:
-            self.b_ = np.zeros(n_songs)
-
-        if self.u_ is None:
-            # Initialize to 0 by default
-            self.u_ = np.zeros((len(playlists), self.n_factors))
-
-        if self.v_ is None:
-            # Initialize to random by default
-            self.v_ = np.random.randn(n_songs, self.n_factors)
+        # Decompose playlists into (user, source, target) tuples
+        self.user_map_, u_i, y_s, y_t = make_theano_inputs(playlists)
 
         # Training loop
+        self.nll_ = []
 
-        for iteration in range(self.max_iter):
-            # Order of operations:
+        for epoch in range(self.n_epochs):
 
-            if 'e' in self.params:
-                L.info('[%3d/%3d] Fitting edge weights',
-                       iteration, self.max_iter)
-                self._fit_edges(bigrams)
+            self.epochs_ = epoch
+            L.debug('Training epoch {:d}'.format(self.epochs_))
 
-            if 'b' in self.params:
-                L.info('[%3d/%3d] Fitting song bias',
-                       iteration, self.max_iter)
-                self._fit_bias(bigrams)
+            # Generate a random permutation
+            idx = np.random.permutation(np.arange(len(u_i)))
 
-            if 'u' in self.params:
-                L.info('[%3d/%3d] Fitting user factors',
-                       iteration, self.max_iter)
-                self._fit_users(bigrams)
+            for i in range(0, len(idx), self.batch_size):
+                self.nll_.extend(self._train(u_i[idx[i:i+self.batch_size]],
+                                             y_s[idx[i:i+self.batch_size]],
+                                             y_t[idx[i:i+self.batch_size]]))
 
-            if 's' in self.params:
-                L.info('[%3d/%3d] Fitting song factors',
-                       iteration, self.max_iter)
-                self._fit_songs(bigrams)
+                if hasattr(self.callback, '__call__'):
+                    self.callback(self)
 
-            self.iteration_ = iteration
-
-            if hasattr(self.callback, '__call__'):
-                self.callback(self)
+        self.nll_ = np.asarray(self.nll_)
 
         L.info('Done.')
+
+    def init_functions(self):
+        '''Construct functions for the model'''
+
+        # Construct the objective function
+
+        #   Input variables
+        u_i, y_s, y_t = T.ivectors(['u_i', 'y_s', 'y_t'])
+
+        #   Intermediate variables
+        item_scores = T.dot(self._U[u_i], self._V.T) + self._b
+        e_scores = T.exp(item_scores - item_scores.max(axis=1, keepdims=True))
+
+        #   Edge feasibilities
+        prev_feas = sparse_slice_rows(self.H, y_s)
+        #   Detect and reset initial-state transitions
+        prev_feas = theano.tensor.set_subtensor(prev_feas[y_s < 0, :], 1.0)
+
+        #   Raw edge probabilities
+        edge_given_prev = T.nnet.softmax(prev_feas * self._w)
+
+        #   Compute edge normalization factors:
+        #     sum of score mass in each edge for each user
+        edge_norms = ts.dot(e_scores, self.H)
+
+        #   Slice the edge weights according to incoming feasibilities
+        next_weight = e_scores[T.arange(y_t.shape[0]), y_t]
+
+        #   Marginalize
+        next_feas = sparse_slice_rows(self.H, y_t)
+
+        probs = next_weight * T.dot(next_feas,
+                                    (edge_given_prev / (__EPS + edge_norms)).T)
+
+        # Data likelihood term
+        ll = T.log(probs).mean()
+
+        # Priors
+        w_prior = 0.5 * self.edge_reg * (self._w**2).sum()
+        b_prior = 0.5 * self.bias_reg * (self._b**2).sum()
+        u_prior = 0.5 * self.user_reg * (self._U**2).sum()
+        v_prior = 0.5 * self.song_reg * (self._V**2).sum()
+
+        # negative log-MAP objective
+        cost = -1 * (ll + u_prior + v_prior + b_prior + w_prior)
+
+        # Construct the updates
+        updates = []
+        if 'e' in self.params:
+            updates.append(self._w)
+        if 'b' in self.params:
+            updates.append(self._b)
+        if 'u' in self.params:
+            updates.append(self._U)
+        if 'v' in self.params:
+            updates.append(self._V)
+
+        self._train = theano.function(inputs=[u_i, y_s, y_t],
+                                      outputs=[ll],
+                                      updates=nntools.updates.adagrad(cost,
+                                                                      updates))
+
+    @property
+    def U_(self):
+        assert hasattr(self, '_U')
+        return self._U.get_value()
+
+    @property
+    def V_(self):
+        assert hasattr(self, '_V')
+        return self._V.get_value()
+
+    @property
+    def b_(self):
+        assert hasattr(self, '_b')
+        return self._b.get_value()
+
+    @property
+    def w_(self):
+        assert hasattr(self, '_w')
+        return self._w.get_value()
 
     def sample(self, user_id=None, user_factor=None,
                n_songs=10, song_init=None, edge_init=None):
@@ -758,7 +459,7 @@ class PlaylistModel(BaseEstimator):
         return ll
 
 
-# Static methods: things that can parallelize
+# Static functions
 def make_bigrams_usermap(playlists):
     '''generate user map and bigram lists.
 
@@ -784,6 +485,26 @@ def make_bigrams_usermap(playlists):
     return user_map, bigrams
 
 
+def make_theano_inputs(playlists):
+    
+    usermap, bigrams = make_bigrams_usermap(playlists)
+    
+    users = []
+    prevs = []
+    nexts = []
+    
+    for user_id, bg in enumerate(bigrams):
+        for s, t in bg:
+            users.append(user_id)
+            prevs.append(s)
+            nexts.append(t)
+            
+    return (usermap,
+            np.asarray(users, dtype=np.int32),
+            np.asarray(prevs, dtype=np.int32),
+            np.asarray(nexts, dtype=np.int32))
+
+
 def playlist_to_bigram(playlist):
     '''Convert a sequence of ids into bigram form.
 
@@ -798,6 +519,35 @@ def playlist_to_bigram(playlist):
     return bigrams
 
 
+def to_one_hot(y, nb_class, dtype=None):
+    """Return a matrix where each row correspond to the one hot
+    encoding of each element in y.
+
+        :param y: A vector of integer value between 0 and nb_class - 1.
+        :param nb_class: The number of class in y.
+        :param dtype: The dtype of the returned matrix. Default floatX.
+
+        :return: A matrix of shape (y.shape[0], nb_class), where each
+          row ``i`` is the one hot encoding of the corresponding ``y[i]``
+          value.
+    """
+
+    ret = theano.tensor.zeros((y.shape[0], nb_class),
+                              dtype=dtype)
+
+    ret = theano.tensor.set_subtensor(ret[theano.tensor.arange(y.shape[0]), y],
+                                      1)
+    return ret
+
+
+def sparse_slice_rows(H, idx):
+    '''Returns a dense slice H[idx, :]'''
+
+    vecs = to_one_hot(idx, H.shape[0], dtype=H.dtype)
+
+    return ts.dot(vecs, H)
+
+
 def categorical(z):
     '''Sample from a categorical random variable'''
 
@@ -806,379 +556,3 @@ def categorical(z):
     assert np.all(z >= 0.0) and np.any(z > 0)
 
     return np.flatnonzero(np.random.multinomial(1, z))[0].astype(np.uint)
-
-
-# common functions to user, item, and bias optimization:
-def make_bigram_weights(H, s, t, weight):
-    if s is None:
-        # This is a phantom state, so we only care about t
-        my_weight = H[t].multiply(weight)
-    else:
-        # Otherwise, (s,t) is a valid transition, so use both
-        my_weight = H[s].multiply(H[t]).multiply(weight)
-
-    my_weight = np.ravel(my_weight)
-
-    # Normalize the edge probabilities
-    return my_weight / my_weight.sum()
-
-
-def sample_noise_items(n_neg, H, edge_dist, b, y_pos):
-    '''Sample n_neg items from the noise distribution,
-    forbidding observed samples y_pos.
-    '''
-
-    # P(t) = sum_e P(t|e) P(e)
-    # P(t | e) = item_score[t] / edge_score[e]
-    y_pos = list(set(y_pos))
-
-    n_items = H.shape[0]
-
-    # First, construct the item scores
-    item_dist = np.exp(b)
-    item_dist[y_pos] = 0.0
-
-    # Normalize the edge distribution
-    edge_dist = edge_dist / np.sum(edge_dist)
-
-    # And compute per-edge mass normalizations
-    edge_z = item_dist * H
-    edge_z[edge_z == 0] = _MIN_VAL
-
-    # Marginalize over the edges
-    sampling_dist = np.ravel(item_dist * (H * (edge_dist / edge_z)))
-    sampling_dist /= np.sum(sampling_dist)
-
-    # Cut the noise ids down to feasibility
-    n_neg = max(0, min(n_neg, n_items - len(y_pos)))
-
-    # Sample without replacement
-    noise_ids = np.random.choice(range(n_items),
-                                 size=n_neg,
-                                 replace=False,
-                                 p=sampling_dist)
-
-    return list(noise_ids)
-
-
-def generate_user_instance(n_neg, H, exp_w, bigrams, b=None,
-                           U=None, V=None, user_id=None):
-    '''Generate a subproblem instance.
-
-    By default, negatives will be sampled according to their bias term `b`.
-
-    If latent factors and a user id are supplied, negatives will be sampled
-    according to their unbiased, personalized scores `U[user_id].dot(V)`
-
-    Inputs:
-        - n_neg : # of negative samples
-        - H : hypergraph incidence matrix
-        - edge_dist : weights of the edges of H (exponentiated)
-        - b : bias factors for items
-        - bigrams : list of tuples (s, t) for the user
-        - U : user factors
-        - V : item factors
-        - user_id : index of the user
-
-    Outputs:
-        - y : +-1 label vector
-        - weights : importance weights, shape=y.shape
-        - ids : list of indices for the sampled points, shape=y.shape
-    '''
-
-    if b is None:
-        if user_id is not None:
-            item_scores = V.dot(U[user_id])
-        else:
-            item_scores = np.ones(H.shape[0])
-    else:
-        item_scores = b
-
-    # 1. Extract positive ids
-    pos_ids = [t for (s, t) in bigrams]
-
-    # 2. Sample n_neg songs from the noise model (u=0)
-    noise_ids = sample_noise_items(n_neg,
-                                   H,
-                                   exp_w,
-                                   item_scores,
-                                   pos_ids)
-
-    # 3. Compute and normalize the bigram transition weights
-    #   handle the special case of s==None here
-
-    bigram_weights = np.asarray([make_bigram_weights(H, s, t, exp_w)
-                                 for (s, t) in bigrams])
-
-    # 4. Compute the importance weights for noise samples
-    noise_weights = np.sum(np.asarray([[(H[i] * bg.T)
-                                        for i in noise_ids]
-                                       for bg in bigram_weights]),
-                           axis=0).ravel()
-
-    # 5. Construct the inputs to the solver
-    y = np.ones(len(pos_ids) + len(noise_ids))
-    y[len(pos_ids):] = -1
-
-    # The first bunch are positive examples, and get weight=+1
-    weights = np.ones_like(y)
-
-    # The remaining examples get noise weights
-    weights[len(pos_ids):] = noise_weights
-
-    ids = np.concatenate([pos_ids, noise_ids]).astype(np.int)
-
-    return y, weights, ids
-
-
-# edge optimization
-def edge_user_weights(H, H_T, u, idx, v, b, bigrams):
-    '''Compute the edge weights and transition statistics for a user.'''
-
-    # First, compute the user-item affinities
-    item_scores = np.zeros(H.shape[0])
-    if u is not None and v is not None:
-        item_scores += v.dot(u[idx])
-    if b is not None:
-        item_scores += b
-
-    item_scores = np.exp(item_scores)
-
-    # Now aggregate by edge
-    edge_scores = (H_T * item_scores)**(-1.0)
-
-    # num playlists is the number of bigrams where s == None
-    num_playlists = 0
-    num_usage = np.zeros(len(b))
-    Z = 0
-
-    # Now sum over bigrams
-    for s, t in bigrams:
-        Z = Z + make_bigram_weights(H, s, t, edge_scores)
-        if s is None:
-            num_playlists += 1
-        else:
-            num_usage[s] += 1
-
-    return Z, num_usage, num_playlists
-
-
-# item optimization
-def item_factor_optimize(i, y, weights, ids, dual, rho, U_, V_, b_,
-                         Aout=None):
-
-    # Slice out the relevant components of this subproblem
-    u = U_[i]
-    V = np.take(V_, ids, axis=0)
-    b = np.take(b_, ids)
-
-    # Compute the residual
-    Z = V - dual
-
-    def __item_obj(_a):
-        '''Optimize the item objective function'''
-
-        A = _a.view()
-        A.shape = Z.shape
-
-        scores = y * (A.dot(u) + b)
-
-        delta = A - Z
-        f = rho * 0.5 * np.sum(delta**2)
-        f += weights.dot(np.logaddexp(0, -scores))
-
-        grad = rho * delta
-        grad += np.multiply.outer(-y * weights / (1.0 + np.exp(scores)), u)
-
-        grad_out = grad.view()
-        grad_out.shape = (grad.size, )
-
-        return f, grad_out
-
-    # Probably a decent initial point
-    if Aout is not None:
-        a0 = Aout
-    else:
-        # otherwise, V slice is pretty good too
-        a0 = V.copy()
-
-    a_opt, value, diagnostic = scipy.optimize.fmin_l_bfgs_b(__item_obj, a0)
-
-    # Ensure that convergence happened correctly
-    if diagnostic['warnflag'] != 0:
-        L.error('Failed convergence in item optimization')
-        raise RuntimeError(diagnostic['task'])
-
-    # Reshape the solution
-    a_opt.shape = V.shape
-
-    # If we have a target destination, fill it
-    if Aout is not None:
-        Aout[:] = a_opt
-    else:
-        # Otherwise, point to the new array
-        Aout = a_opt
-
-    return Aout
-
-
-# bias optimization
-def item_bias_optimize(i, y, weights, ids, dual, rho, U_, V_, b_, Cout=None):
-
-    # Slice out the relevant components of this subproblem
-    b = np.take(b_, ids)
-
-    # Compute the residual
-    z = b - dual
-
-    if U_ is not None:
-        u = U_[i]
-        V = np.take(V_, ids, axis=0)
-        user_scores = V.dot(u)
-    else:
-        user_scores = np.zeros_like(b)
-
-    def __bias_obj(c):
-
-        scores = y * (user_scores + c)
-
-        delta = c - z
-
-        f = rho * 0.5 * np.sum(delta**2)
-
-        f += weights.dot(np.logaddexp(0, -scores))
-
-        grad = rho * delta
-        grad += -y * weights / (1.0 + np.exp(scores))
-
-        return f, grad
-
-    if Cout is not None:
-        c0 = Cout
-    else:
-        c0 = b.copy()
-
-    c_opt, value, diagnostic = scipy.optimize.fmin_l_bfgs_b(__bias_obj, c0)
-
-    if diagnostic['warnflag'] != 0:
-        L.error('Failed convergence in bias optimization')
-        raise RuntimeError(diagnostic['task'])
-
-
-    if Cout is not None:
-        Cout[:] = c_opt
-    else:
-        Cout = c_opt
-
-    return Cout
-
-
-# user optimization
-def user_problem(n_noise, H, exp_w, reg, v, b, bigrams, user_norm, u0=None):
-    '''Optimize a user's latent factor representation
-
-    :parameters:
-        - n_noise : int > 0
-          # noise items to sample
-
-        - H : scipy.sparse.csr_matrix, shape=(n_songs, n_edges)
-          The hypergraph adjacency matrix
-
-        - exp_w : ndarray, shape=(n_edges,)
-          edge weight array (exponentiated)
-
-        - reg : float >= 0
-          Regularization penalty
-
-        - v : ndarray, shape=(n_songs, n_factors)
-          Latent factor representation of items
-
-        - b : ndarray, shape=(n_songs,)
-          Bias terms for songs
-
-        - bigrams : iterable of tuples (s, t)
-          Observed bigrams for the user
-
-        - u0 : None or ndarray, shape=(n_factors,)
-          Optional initial value for u
-
-    :returns:
-        - u_opt : ndarray, shape=(n_factors,)
-          Optimal user vector
-    '''
-
-    y, weights, ids = generate_user_instance(n_noise, H, exp_w, bigrams, b=b)
-
-    return user_optimize_objective(reg,
-                                   np.take(v, ids, axis=0),
-                                   np.take(b, ids),
-                                   y,
-                                   weights,
-                                   user_norm,
-                                   u0=u0)
-
-
-def user_optimize_objective(reg, v, b, y, omega, user_norm, u0=None):
-    '''Optimize a user vector from a sample of positive and noise items
-
-    :parameters:
-        - reg : float >= 0
-          Regularization penalty
-
-        - v : ndarray, shape=(m, n_factors)
-          Latent factor representations for sampled items
-
-        - b : ndarray, shape=(m,)
-          Bias terms for items
-
-        - y : ndarray, shape=(m,)
-          Sign matrix for items (+1 = positive association, -1 = negative)
-
-        - omega : ndarray, shape=(m,)
-          Importance weights for items
-
-        - u0 : None or ndarray, shape=(n_factors,)
-          Initial value for the user vector
-
-    :returns:
-        - u_opt : ndarray, shape=(n_factors,)
-          Optimal user vector
-    '''
-
-    def __user_obj(u):
-        '''Optimize the user objective function:
-
-            min_u reg * ||u||^2
-                + sum_i y[i] * omega[i] * log(1 + exp(-y * u'v[i] + b[i]))
-
-        '''
-
-        # Compute the scores
-        scores = y * (v.dot(u) + b)
-
-        f = reg * 0.5 * np.sum(u**2)
-        f += omega.dot(np.logaddexp(0, -scores))
-
-        grad = reg * u
-        grad -= v.T.dot(y * omega / (1.0 + np.exp(scores)))
-
-        return f, grad
-
-    if not u0:
-        u0 = np.zeros(v.shape[-1])
-    else:
-        assert len(u0) == v.shape[-1]
-
-    u_opt, value, diagnostic = scipy.optimize.fmin_l_bfgs_b(__user_obj, u0)
-
-    # Ensure that convergence happened correctly
-    if diagnostic['warnflag'] != 0:
-        L.error('Failed convergence in user optimization')
-        raise RuntimeError(diagnostic['task'])
-
-    u_z = np.sqrt(np.sum(u_opt**2))
-
-    if user_norm and u_z > _MIN_VAL:
-        u_opt /= u_z
-
-    return u_opt
