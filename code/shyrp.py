@@ -28,6 +28,7 @@ class PlaylistModel(BaseEstimator):
                  edge_init=None, bias_init=None,
                  user_init=None, song_init=None,
                  params='ebus', verbose=0,
+                 dropout=0.0,
                  callback=None):
         """Initialize a personalized playlist model
 
@@ -78,6 +79,9 @@ class PlaylistModel(BaseEstimator):
             - 'u' : users
             - 's' : songs
 
+         - dropout : float in [0, 1.0)
+            If > 0, alternative items are randomly dropped during trainig
+
          - verbose : int >= 0
             Verbosity (logging) level
 
@@ -104,6 +108,8 @@ class PlaylistModel(BaseEstimator):
 
         self.params = params
         self.n_factors = n_factors
+
+        self.dropout = dropout
 
         if user_init is not None:
             self.n_factors = user_init.shape[1]
@@ -163,12 +169,15 @@ class PlaylistModel(BaseEstimator):
 
         # Initialize the song factors
         if song_init is None:
-            song_init = np.random.randn(self.n_songs, self.n_factors).astype(dtype)
+            song_init = np.random.randn(self.n_songs,
+                                        self.n_factors).astype(dtype)
         else:
             assert np.allclose(song_init.shape, (self.n_songs, self.n_factors))
             song_init = song_init.astype(dtype)
 
         self._V = theano.shared(song_init, name='V')
+
+        self._rng = theano.sandbox.rng_mrg.MRG_RandomStreams()
 
     def fit(self, playlists):
         '''fit the model.
@@ -224,6 +233,17 @@ class PlaylistModel(BaseEstimator):
         item_scores = item_scores - item_scores.max(axis=1, keepdims=True)
 
         e_scores = T.exp(item_scores)
+
+        if self.dropout > 0.0:
+            # Construct a random dropout mask
+            retain_prob = 1.0 - self.dropout
+            mask = self._rng.binomial(e_scores.shape,
+                                      p=retain_prob,
+                                      dtype=theano.config.floatX)
+
+            mask = theano.tensor.set_subtensor(mask[T.arange(y_t.shape[0]), y_t], 1.0)
+
+            e_scores = e_scores * mask / retain_prob
 
         #   Edge feasibilities
         prev_feas = sparse_slice_rows(self.H, y_s)
