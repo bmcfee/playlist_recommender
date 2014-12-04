@@ -14,7 +14,7 @@ import nntools
 from sklearn.base import BaseEstimator
 
 # Prevent numerical underflow
-__EPS = 1e-8
+_EPS = 1e-8
 
 L = logging.getLogger(__name__)
 
@@ -197,6 +197,7 @@ class PlaylistModel(BaseEstimator):
             idx = np.random.permutation(np.arange(len(u_i)))
 
             for i in range(0, len(idx), self.batch_size):
+
                 self.nll_.extend(self._train(u_i[idx[i:i+self.batch_size]],
                                              y_s[idx[i:i+self.batch_size]],
                                              y_t[idx[i:i+self.batch_size]]))
@@ -218,12 +219,16 @@ class PlaylistModel(BaseEstimator):
 
         #   Intermediate variables
         item_scores = T.dot(self._U[u_i], self._V.T) + self._b
-        e_scores = T.exp(item_scores - item_scores.max(axis=1, keepdims=True))
+
+        # subtract off the row-wise max for numerical stability
+        item_scores = item_scores - item_scores.max(axis=1, keepdims=True)
+
+        e_scores = T.exp(item_scores)
 
         #   Edge feasibilities
         prev_feas = sparse_slice_rows(self.H, y_s)
         #   Detect and reset initial-state transitions
-        prev_feas = theano.tensor.set_subtensor(prev_feas[y_s < 0, :], 1.0)
+        prev_feas = theano.tensor.set_subtensor(prev_feas[y_s < 0, :], 1)
 
         #   Raw edge probabilities
         edge_given_prev = T.nnet.softmax(prev_feas * self._w)
@@ -239,35 +244,36 @@ class PlaylistModel(BaseEstimator):
         next_feas = sparse_slice_rows(self.H, y_t)
 
         probs = next_weight * T.dot(next_feas,
-                                    (edge_given_prev / (__EPS + edge_norms)).T)
+                                    (edge_given_prev / (_EPS + edge_norms)).T)
 
         # Data likelihood term
         ll = T.log(probs).mean()
 
         # Priors
-        w_prior = 0.5 * self.edge_reg * (self._w**2).sum()
-        b_prior = 0.5 * self.bias_reg * (self._b**2).sum()
-        u_prior = 0.5 * self.user_reg * (self._U**2).sum()
-        v_prior = 0.5 * self.song_reg * (self._V**2).sum()
+        w_prior = -0.5 * self.edge_reg * (self._w**2).sum()
+        b_prior = -0.5 * self.bias_reg * (self._b**2).sum()
+        u_prior = -0.5 * self.user_reg * (self._U**2).sum()
+        v_prior = -0.5 * self.song_reg * (self._V**2).sum()
 
         # negative log-MAP objective
-        cost = -1 * (ll + u_prior + v_prior + b_prior + w_prior)
+        cost = -1.0 * (ll + u_prior + v_prior + b_prior + w_prior)
 
         # Construct the updates
-        updates = []
+        variables = []
         if 'e' in self.params:
-            updates.append(self._w)
+            variables.append(self._w)
         if 'b' in self.params:
-            updates.append(self._b)
+            variables.append(self._b)
         if 'u' in self.params:
-            updates.append(self._U)
-        if 'v' in self.params:
-            updates.append(self._V)
+            variables.append(self._U)
+        if 's' in self.params:
+            variables.append(self._V)
+
+        updates = nntools.updates.adagrad(cost, variables)
 
         self._train = theano.function(inputs=[u_i, y_s, y_t],
                                       outputs=[ll],
-                                      updates=nntools.updates.adagrad(cost,
-                                                                      updates))
+                                      updates=updates)
 
     @property
     def U_(self):
@@ -347,7 +353,7 @@ class PlaylistModel(BaseEstimator):
         playlist = []
         edges = []
 
-        for i in range(n_songs):
+        for _ in range(n_songs):
             # Pick a song from the current edge
             song = categorical(self.H_T_[edge].multiply(item_scores))
 
@@ -486,19 +492,19 @@ def make_bigrams_usermap(playlists):
 
 
 def make_theano_inputs(playlists):
-    
+
     usermap, bigrams = make_bigrams_usermap(playlists)
-    
+
     users = []
     prevs = []
     nexts = []
-    
+
     for user_id, bg in enumerate(bigrams):
         for s, t in bg:
             users.append(user_id)
             prevs.append(s)
             nexts.append(t)
-            
+
     return (usermap,
             np.asarray(users, dtype=np.int32),
             np.asarray(prevs, dtype=np.int32),
@@ -511,7 +517,7 @@ def playlist_to_bigram(playlist):
     A 'None' is pushed onto the front to indicate the beginning.
     '''
 
-    my_pl = [None]
+    my_pl = [-1]
     my_pl.extend(playlist)
 
     bigrams = zip(my_pl[:-1], my_pl[1:])
