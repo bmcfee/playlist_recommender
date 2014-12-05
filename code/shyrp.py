@@ -439,6 +439,10 @@ class PlaylistModel(BaseEstimator):
 
 # Static functions
 def make_theano_inputs(playlists, user_map):
+    '''Given a dictionary on user -> list of playlists,
+    and a dictionary of user -> user_id,
+    Construct theano-friendly inputs.
+    '''
 
     u_id = []
     y_s = []
