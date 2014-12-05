@@ -196,25 +196,30 @@ class PlaylistModel(BaseEstimator):
 
         # Training loop
         self.nll_ = []
+        self.cost_ = []
 
         for epoch in range(self.n_epochs):
 
             self.epochs_ = epoch
-            L.debug('Training epoch {:d}'.format(self.epochs_))
-
             # Generate a random permutation
             idx = np.random.permutation(np.arange(len(u_i)))
 
+            L.debug('Training epoch {:d}'.format(self.epochs_))
+
             for i in range(0, len(idx), self.batch_size):
 
-                self.nll_.extend(self._train(u_i[idx[i:i+self.batch_size]],
-                                             y_s[idx[i:i+self.batch_size]],
-                                             y_t[idx[i:i+self.batch_size]]))
+                b_ll, b_cost = self._train(u_i=u_i[idx[i:i+self.batch_size]],
+                                           y_s=y_s[idx[i:i+self.batch_size]],
+                                           y_t=y_t[idx[i:i+self.batch_size]],
+                                           p=self.dropout)
+                self.nll_.append(b_ll)
+                self.cost_.append(b_cost)
 
                 if hasattr(self.callback, '__call__'):
                     self.callback(self)
 
         self.nll_ = np.asarray(self.nll_)
+        self.cost_ = np.asarray(self.cost_)
 
         L.info('Done.')
 
@@ -226,6 +231,8 @@ class PlaylistModel(BaseEstimator):
         #   Input variables
         u_i, y_s, y_t = T.ivectors(['u_i', 'y_s', 'y_t'])
 
+        dropout = T.fscalar(name='p')
+
         #   Intermediate variables
         item_scores = T.dot(self._U[u_i], self._V.T) + self._b
 
@@ -234,16 +241,17 @@ class PlaylistModel(BaseEstimator):
 
         e_scores = T.exp(item_scores)
 
-        if self.dropout > 0.0:
+        if T.gt(dropout, 0.0):
             # Construct a random dropout mask
-            retain_prob = 1.0 - self.dropout
-            mask = self._rng.binomial(e_scores.shape,
-                                      p=retain_prob,
-                                      dtype=theano.config.floatX)
+            retain_prob = 1.0 - dropout
+            M = self._rng.binomial(e_scores.shape,
+                                   p=retain_prob,
+                                   dtype=theano.config.floatX)
 
-            mask = theano.tensor.set_subtensor(mask[T.arange(y_t.shape[0]), y_t], 1.0)
+            M = theano.tensor.set_subtensor(M[T.arange(y_t.shape[0]), y_t],
+                                            1.0)
 
-            e_scores = e_scores * mask / retain_prob
+            e_scores = e_scores * M / retain_prob
 
         #   Edge feasibilities
         prev_feas = sparse_slice_rows(self.H, y_s)
@@ -267,7 +275,8 @@ class PlaylistModel(BaseEstimator):
                                     (edge_given_prev / (_EPS + edge_norms)).T)
 
         # Data likelihood term
-        ll = T.log(probs).mean()
+        ll = T.log(probs)
+        avg_ll = ll.mean()
 
         # Priors
         w_prior = -0.5 * self.edge_reg * (self._w**2).sum()
@@ -276,7 +285,7 @@ class PlaylistModel(BaseEstimator):
         v_prior = -0.5 * self.song_reg * (self._V**2).sum()
 
         # negative log-MAP objective
-        cost = -1.0 * (ll + u_prior + v_prior + b_prior + w_prior)
+        cost = -1.0 * (avg_ll + u_prior + v_prior + b_prior + w_prior)
 
         # Construct the updates
         variables = []
@@ -291,9 +300,13 @@ class PlaylistModel(BaseEstimator):
 
         updates = nntools.updates.adagrad(cost, variables)
 
-        self._train = theano.function(inputs=[u_i, y_s, y_t],
-                                      outputs=[ll],
+        self._train = theano.function(inputs=[u_i, y_s, y_t, dropout],
+                                      outputs=[avg_ll, cost],
                                       updates=updates)
+
+        self._loglikelihood = theano.function(inputs=[u_i, y_s, y_t,
+                                                      theano.Param(dropout, default=0.0, name='p')],
+                                              outputs=[ll])
 
     @property
     def U_(self):
