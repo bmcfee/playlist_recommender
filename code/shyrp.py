@@ -137,6 +137,8 @@ class PlaylistModel(BaseEstimator):
     def init_variables(self, edge_init, bias_init, user_init, song_init):
         '''Construct theano shared variables'''
 
+        self.user_map_ = {}
+
         self.n_songs, self.n_edges = self.H.shape
         dtype = theano.config.floatX
 
@@ -192,7 +194,9 @@ class PlaylistModel(BaseEstimator):
         '''
 
         # Decompose playlists into (user, source, target) tuples
-        self.user_map_, u_i, y_s, y_t = make_theano_inputs(playlists)
+        self.init_user_map(playlists)
+
+        u_i, y_s, y_t = make_theano_inputs(playlists, self.user_map_)
 
         # Training loop
         self.nll_ = []
@@ -404,8 +408,7 @@ class PlaylistModel(BaseEstimator):
     def loglikelihood(self, playlists, avg=True):
         '''Compute the average log-likelihood of a collection of playlists'''
 
-        _, u_i, y_s, y_t = make_theano_inputs(playlists,
-                                              user_map=self.user_map_)
+        u_i, y_s, y_t = make_theano_inputs(playlists, user_map=self.user_map_)
 
         # Compute in batches
         n_examples = len(u_i)
@@ -413,9 +416,10 @@ class PlaylistModel(BaseEstimator):
         ll = []
 
         for i in range(0, n_examples, self.batch_size):
-            ll.extend(list(self._loglikelihood(u_i=u_i[i:i+self.batch_size],
-                                          y_s=y_s[i:i+self.batch_size],
-                                          y_t=y_t[i:i+self.batch_size])[0].ravel()))
+            bll = self._loglikelihood(u_i=u_i[i:i+self.batch_size],
+                                      y_s=y_s[i:i+self.batch_size],
+                                      y_t=y_t[i:i+self.batch_size])[0].ravel()
+            ll.extend(list(bll))
 
         ll = np.asarray(ll)
 
@@ -424,69 +428,48 @@ class PlaylistModel(BaseEstimator):
 
         return ll
 
+    def init_user_map(self, playlists):
+        '''Build a mapping of user ids from a dictionary of playlists'''
+
+        self.user_map_ = dict()
+
+        for i, user_id in enumerate(playlists.iterkeys()):
+            self.user_map_[user_id] = i
+
 
 # Static functions
-def make_bigrams_usermap(playlists, user_map=None):
-    '''generate user map and bigram lists.
+def make_theano_inputs(playlists, user_map):
 
-    input:
-        - playlists : dict : user_id => playlists
+    u_id = []
+    y_s = []
+    y_t = []
 
-    '''
+    for user_key, pls in playlists.iteritems():
 
-    existing_map = True
-    if user_map is None:
-        user_map = dict()
-        existing_map = False
+        my_uid = user_map[user_key]
 
-    bigrams = []
+        for pl in pls:
+            prevs, nexts = playlist_to_bigrams(pl)
 
-    for i, user_id in enumerate(sorted(playlists)):
+            u_id.extend([my_uid] * len(prevs))
+            y_s.extend(prevs)
+            y_t.extend(nexts)
 
-        if not existing_map:
-            user_map[user_id] = i
-
-        user_bigrams = []
-        for pl in playlists[user_id]:
-            user_bigrams.extend(playlist_to_bigram(pl))
-
-        bigrams.append(user_bigrams)
-
-    return user_map, bigrams
+    return (np.asarray(u_id, dtype=np.int32),
+            np.asarray(y_s, dtype=np.int32),
+            np.asarray(y_t, dtype=np.int32))
 
 
-def make_theano_inputs(playlists, user_map=None):
-
-    user_map, bigrams = make_bigrams_usermap(playlists, user_map=user_map)
-
-    users = []
-    prevs = []
-    nexts = []
-
-    for user_id, bg in enumerate(bigrams):
-        for s, t in bg:
-            users.append(user_id)
-            prevs.append(s)
-            nexts.append(t)
-
-    return (user_map,
-            np.asarray(users, dtype=np.int32),
-            np.asarray(prevs, dtype=np.int32),
-            np.asarray(nexts, dtype=np.int32))
-
-
-def playlist_to_bigram(playlist):
+def playlist_to_bigrams(playlist, default=-1):
     '''Convert a sequence of ids into bigram form.
 
     A 'None' is pushed onto the front to indicate the beginning.
     '''
 
-    my_pl = [-1]
+    my_pl = [default]
     my_pl.extend(playlist)
 
-    bigrams = zip(my_pl[:-1], my_pl[1:])
-
-    return bigrams
+    return my_pl[:-1], my_pl[1:]
 
 
 def to_one_hot(y, nb_class, dtype=None):
