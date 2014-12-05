@@ -398,108 +398,33 @@ class PlaylistModel(BaseEstimator):
 
         return playlist, edges
 
-    def loglikelihood(self, playlists, normalize=False):
-        '''Compute the average log-likelihood of a collection of playlists.
+    def loglikelihood(self, playlists, avg=True):
+        '''Compute the average log-likelihood of a collection of playlists'''
 
-        :parameters:
-            - playlists : dict : user_d -> playlist array
-              See fit()
+        _, u_i, y_s, y_t = make_theano_inputs(playlists,
+                                              user_map=self.user_map_)
 
-            - normalize : bool
-              If true, normalize each playlist by its length
+        # Compute in batches
+        n_examples = len(u_i)
 
-        '''
+        ll = []
 
-        ll = 0.0
-        num_playlists = 0
+        for i in range(0, n_examples, self.batch_size):
 
-        for user_id, user_playlists in playlists.iteritems():
-            for pl in user_playlists:
-                ll += self.example_loglikelihood(pl,
-                                                 user_id=user_id,
-                                                 normalize=normalize)
-                num_playlists += 1
+            ll.extend(self._loglikelihood(u_i=u_i[i:i+self.batch_size],
+                                          y_s=y_s[i:i+self.batch_size],
+                                          y_t=y_t[i:i+self.batch_size]))
 
-        return ll / num_playlists
+        ll = np.asarray(ll)
 
-    def example_loglikelihood(self, playlist, user_id=None, user_num=None,
-                              normalize=False):
-        '''Compute the log-likelihood of a single playlist.
-
-        :parameters:
-            playlist : list of ints
-              The playlist
-
-            user_id : hashable or None
-              If supplied, the key for the user
-
-            user_num : int or None
-              If supplied, the index number of the user
-              If no user data is supplied, we synthesize an
-              all-zeros user factor
-
-            normalize : bool
-              If true, loglikelihood will be normalized by length
-
-        :returns:
-            - loglikelihood : float
-              The log probability of generating the observed sequence
-        '''
-
-        user_factor = np.zeros(self.n_factors)
-
-        if user_id is not None:
-            user_num = self.user_map_[user_id]
-
-        if user_num is not None:
-            user_factor = self.U_[user_num]
-
-        # Score the items
-        item_scores = np.zeros(self.H.shape[0])
-
-        if self.v_ is not None:
-            item_scores += self.V_.dot(user_factor)
-
-        if self.b_ is not None:
-            item_scores += self.b_
-
-        item_scores = np.exp(item_scores)
-
-        # Compute edge probabilities
-        edge_scores = np.exp(self.w_)
-
-        # Build bigrams
-        bigrams = playlist_to_bigram(playlist)
-
-        # Compute likelihoods
-        ll = 0.0
-        for s, t in bigrams:
-            # Compute the edge distribution P(e | s)
-            if s is None:
-                # All edges are valid
-                p_e_s = edge_scores
-            else:
-                # Only edges touching s are valid
-                p_e_s = self.H[s].multiply(edge_scores)
-
-            # Normalize to form a distribution
-            p_e_s = np.ravel(p_e_s) / np.sum(p_e_s)
-
-            # Compute P(t | e) = score(t) / sum(score(j) | j in E)
-            edge_mass = self.H.T * item_scores
-            p_t_e = item_scores[t] / edge_mass
-
-            # Compute P(t | s) = P(t | e) P(e | s)
-            ll += np.log(p_t_e.dot(p_e_s))
-
-        if normalize:
-            ll /= len(playlist)
+        if avg:
+            ll = ll.mean()
 
         return ll
 
 
 # Static functions
-def make_bigrams_usermap(playlists):
+def make_bigrams_usermap(playlists, user_map=None):
     '''generate user map and bigram lists.
 
     input:
@@ -507,13 +432,17 @@ def make_bigrams_usermap(playlists):
 
     '''
 
-    user_map = dict()
+    existing_map = True
+    if user_map is None:
+        user_map = dict()
+        existing_map = False
 
     bigrams = []
 
     for i, user_id in enumerate(sorted(playlists)):
 
-        user_map[user_id] = i
+        if not existing_map:
+            user_map[user_id] = i
 
         user_bigrams = []
         for pl in playlists[user_id]:
@@ -524,9 +453,9 @@ def make_bigrams_usermap(playlists):
     return user_map, bigrams
 
 
-def make_theano_inputs(playlists):
+def make_theano_inputs(playlists, user_map=None):
 
-    usermap, bigrams = make_bigrams_usermap(playlists)
+    user_map, bigrams = make_bigrams_usermap(playlists, user_map=user_map)
 
     users = []
     prevs = []
@@ -538,7 +467,7 @@ def make_theano_inputs(playlists):
             prevs.append(s)
             nexts.append(t)
 
-    return (usermap,
+    return (user_map,
             np.asarray(users, dtype=np.int32),
             np.asarray(prevs, dtype=np.int32),
             np.asarray(nexts, dtype=np.int32))
