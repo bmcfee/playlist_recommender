@@ -233,7 +233,7 @@ class PlaylistModel(BaseEstimator):
 
         dropout = T.fscalar(name='p')
 
-        #   Intermediate variables
+        #   Intermediate variables: n_examples * n_songs
         item_scores = T.dot(self._U[u_i], self._V.T) + self._b
 
         # subtract off the row-wise max for numerical stability
@@ -253,26 +253,27 @@ class PlaylistModel(BaseEstimator):
 
             e_scores = e_scores * M / retain_prob
 
-        #   Edge feasibilities
+        #   Edge feasibilities: n_examples * n_edges
         prev_feas = sparse_slice_rows(self.H, y_s)
         #   Detect and reset initial-state transitions
         prev_feas = theano.tensor.set_subtensor(prev_feas[y_s < 0, :], 1)
 
-        #   Raw edge probabilities
+        #   Raw edge probabilities: n_examples * n_edges
         edge_given_prev = T.nnet.softmax(prev_feas * self._w)
 
-        #   Compute edge normalization factors:
+        #   Compute edge normalization factors: n_examples * n_edges
         #     sum of score mass in each edge for each user
         edge_norms = ts.dot(e_scores, self.H)
 
-        #   Slice the edge weights according to incoming feasibilities
+        #   Slice the edge weights according to incoming feasibilities: n_examples
         next_weight = e_scores[T.arange(y_t.shape[0]), y_t]
 
-        #   Marginalize
+        #   Marginalize: n_examples * n_edges
         next_feas = sparse_slice_rows(self.H, y_t)
 
-        probs = next_weight * T.dot(next_feas,
-                                    (edge_given_prev / (_EPS + edge_norms)).T)
+        probs = next_weight * T.sum(next_feas * (edge_given_prev / (_EPS + edge_norms)),
+                                    axis=1,
+                                    keepdims=True)
 
         # Data likelihood term
         ll = T.log(probs)
@@ -305,7 +306,9 @@ class PlaylistModel(BaseEstimator):
                                       updates=updates)
 
         self._loglikelihood = theano.function(inputs=[u_i, y_s, y_t,
-                                                      theano.Param(dropout, default=0.0, name='p')],
+                                                      theano.Param(dropout,
+                                                                   default=0.0,
+                                                                   name='p')],
                                               outputs=[ll])
 
     @property
@@ -410,10 +413,9 @@ class PlaylistModel(BaseEstimator):
         ll = []
 
         for i in range(0, n_examples, self.batch_size):
-
-            ll.extend(self._loglikelihood(u_i=u_i[i:i+self.batch_size],
+            ll.extend(list(self._loglikelihood(u_i=u_i[i:i+self.batch_size],
                                           y_s=y_s[i:i+self.batch_size],
-                                          y_t=y_t[i:i+self.batch_size]))
+                                          y_t=y_t[i:i+self.batch_size])[0].ravel()))
 
         ll = np.asarray(ll)
 
