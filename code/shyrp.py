@@ -509,10 +509,11 @@ def sparse_slice_rows(H, idx):
     return ts.dot(vecs, H)
 
 
-def categorical(z, size=None, replace=False):
+def categorical(z, size=None, replace=True):
     '''Sample from a categorical random variable'''
 
-    z = np.ravel(np.asarray(z) / z.sum())
+    z = np.ravel(z).astype(np.float64)
+    z /= np.sum(z)
 
     assert np.all(z >= 0.0) and np.any(z > 0)
 
