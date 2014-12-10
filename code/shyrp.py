@@ -252,10 +252,14 @@ class PlaylistModel(BaseEstimator):
                                    p=retain_prob,
                                    dtype=theano.config.floatX)
 
+            # Importance weight so that E[M[i,j]] = 1
+            M /= retain_prob
+
+            # The positive examples should always be sampled
             M = theano.tensor.set_subtensor(M[T.arange(y_t.shape[0]), y_t],
                                             1.0)
 
-            e_scores = e_scores * M / retain_prob
+            e_scores = e_scores * M
 
         #   Edge feasibilities: n_examples * n_edges
         prev_feas = sparse_slice_rows(self.H, y_s)
@@ -505,11 +509,11 @@ def sparse_slice_rows(H, idx):
     return ts.dot(vecs, H)
 
 
-def categorical(z):
+def categorical(z, size=None, replace=False):
     '''Sample from a categorical random variable'''
 
     z = np.ravel(np.asarray(z) / z.sum())
 
     assert np.all(z >= 0.0) and np.any(z > 0)
 
-    return np.flatnonzero(np.random.multinomial(1, z))[0].astype(np.uint)
+    return np.random.choice(len(z), size=size, p=z, replace=replace)
