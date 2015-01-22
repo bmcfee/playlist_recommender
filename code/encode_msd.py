@@ -83,13 +83,15 @@ def run_encoding(num_cores=None, verbose=None,
     '''Do the big encoding job'''
 
     # Get the master file list
+    msd_path = os.path.abspath(msd_path)
+
     files = sorted(glob.glob(os.path.join(msd_path,
                                           'data',
                                           '*', '*', '*',
                                           '*.h5')))
 
-    if max_files is None:
-        max_files = len(files)
+    if max_files is not None:
+        files = files[:max_files]
 
     # Load the VQ object
     with open(vq_pickle, 'r') as f:
@@ -97,7 +99,7 @@ def run_encoding(num_cores=None, verbose=None,
 
     results = Parallel(n_jobs=num_cores,
                        verbose=verbose)(delayed(msd_encoder)(fn, VQ)
-                                        for fn in files[:max_files])
+                                        for fn in files)
 
     results = pd.concat(results).to_sparse(fill_value=0.0)
 
