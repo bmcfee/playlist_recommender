@@ -103,7 +103,7 @@ def run_encoding(num_cores=None, verbose=None,
 
     print str(vector_quantizer)
 
-    for start in range(0, len(all_files), step=batch_size):
+    for start in range(0, len(all_files), batch_size):
         end = min(len(all_files), start + batch_size)
 
         print "Processing files {:d}--{:d}".format(start, end)
