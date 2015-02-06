@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-
+'''Vector quantization of MSD timbre features'''
 
 from argparse import ArgumentParser
 
@@ -15,6 +15,7 @@ from joblib import Parallel, delayed
 
 
 def process_arguments(args):
+    '''Process arguments from the command line'''
 
     parser = ArgumentParser(description='Multi-core MSD timbre quantizer')
 
@@ -52,7 +53,7 @@ def get_track_timbre(filename):
 
     hdf = pd.HDFStore(filename, mode='r')
 
-    timbres = pd.DataFrame([_ for _ in hdf.get_node('/analysis/segments_timbre')],
+    timbres = pd.DataFrame(list(hdf.get_node('/analysis/segments_timbre')),
                            dtype='float32')
 
     track_id = hdf['/analysis/songs']['track_id'][0]
@@ -61,13 +62,15 @@ def get_track_timbre(filename):
     return track_id, timbres
 
 
-def msd_encoder(filename, VQ):
+def msd_encoder(filename, vector_quantizer):
     '''Compute codeword histograms from MSD analysis files'''
+
+    print '\t{:s}'.format(os.path.basename(filename))
 
     track_id, timbres = get_track_timbre(filename)
 
     # Compute the codeword histogram for this track
-    codeword_hist = np.ravel(VQ.transform(timbres).mean(axis=0))
+    codeword_hist = np.ravel(vector_quantizer.transform(timbres).mean(axis=0))
 
     # Wrap it as a dataframe
     newframe = pd.DataFrame.from_dict({track_id: codeword_hist},
@@ -93,12 +96,17 @@ def run_encoding(num_cores=None, verbose=None,
     if max_files is not None:
         files = files[:max_files]
 
-    # Load the VQ object
-    with open(vq_pickle, 'r') as f:
-        VQ = pickle.load(f)['VQ']
+    # Load the vector_quantizer object
+    with open(vq_pickle, 'r') as fdesc:
+        vector_quantizer = pickle.load(fdesc)['vector_quantizer']
+
+    print str(vector_quantizer)
+
+    print "Processing {:d} files...".format(len(files))
 
     results = Parallel(n_jobs=num_cores,
-                       verbose=verbose)(delayed(msd_encoder)(fn, VQ)
+                       verbose=verbose)(delayed(msd_encoder)(fn,
+                                                             vector_quantizer)
                                         for fn in files)
 
     results = pd.concat(results).to_sparse(fill_value=0.0)
@@ -108,6 +116,4 @@ def run_encoding(num_cores=None, verbose=None,
 
 if __name__ == '__main__':
 
-    parameters = process_arguments(sys.argv[1:])
-
-    run_encoding(**parameters)
+    run_encoding(**process_arguments(sys.argv[1:]))
