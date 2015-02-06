@@ -82,19 +82,20 @@ def msd_encoder(filename, vector_quantizer):
 
 def run_encoding(num_cores=None, verbose=None,
                  vq_pickle=None, output_pickle=None,
-                 msd_path=None, max_files=None):
+                 msd_path=None, max_files=None,
+                 batch_size=10000):
     '''Do the big encoding job'''
 
     # Get the master file list
     msd_path = os.path.abspath(msd_path)
 
-    files = sorted(glob.glob(os.path.join(msd_path,
-                                          'data',
-                                          '*', '*', '*',
-                                          '*.h5')))
+    all_files = sorted(glob.glob(os.path.join(msd_path,
+                                              'data',
+                                              '*', '*', '*',
+                                              '*.h5')))
 
     if max_files is not None:
-        files = files[:max_files]
+        all_files = all_files[:max_files]
 
     # Load the vector_quantizer object
     with open(vq_pickle, 'r') as fdesc:
@@ -102,16 +103,21 @@ def run_encoding(num_cores=None, verbose=None,
 
     print str(vector_quantizer)
 
-    print "Processing {:d} files...".format(len(files))
+    for start in range(0, len(all_files), step=batch_size):
+        end = min(len(all_files), start + batch_size)
 
-    results = Parallel(n_jobs=num_cores,
-                       verbose=verbose)(delayed(msd_encoder)(fn,
-                                                             vector_quantizer)
-                                        for fn in files)
+        print "Processing files {:d}--{:d}".format(start, end)
 
-    results = pd.concat(results).to_sparse(fill_value=0.0)
+        files = all_files[start:end]
 
-    results.to_pickle(output_pickle)
+        results = Parallel(n_jobs=num_cores,
+                           verbose=verbose)(delayed(msd_encoder)(fn,
+                                                                 vector_quantizer)
+                                            for fn in files)
+
+        results = pd.concat(results).to_sparse(fill_value=0.0)
+
+        results.to_pickle('{:s}_{:d}-{:d}'.format(output_pickle, start, end))
 
 
 if __name__ == '__main__':
