@@ -98,7 +98,7 @@ def run_encoding(num_cores=None, verbose=None,
 
     # Load the vector_quantizer object
     with open(vq_pickle, 'r') as fdesc:
-        vector_quantizer = pickle.load(fdesc)['vector_quantizer']
+        vector_quantizer = pickle.load(fdesc)['VQ']
 
     print str(vector_quantizer)
 
