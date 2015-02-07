@@ -72,12 +72,8 @@ def msd_encoder(filename, vector_quantizer):
     # Compute the codeword histogram for this track
     codeword_hist = np.ravel(vector_quantizer.transform(timbres).mean(axis=0))
 
-    # Wrap it as a dataframe
-    newframe = pd.DataFrame.from_dict({track_id: codeword_hist},
-                                      orient='index')
-
-    # Sparsify and return
-    return newframe.to_sparse(fill_value=0.0)
+    # Return the dict
+    return {track_id: codeword_hist}
 
 
 def run_encoding(num_cores=None, verbose=None,
@@ -110,14 +106,14 @@ def run_encoding(num_cores=None, verbose=None,
 
         files = all_files[start:end]
 
-        results = Parallel(n_jobs=num_cores,
-                           verbose=verbose)(delayed(msd_encoder)(fn,
-                                                                 vector_quantizer)
-                                            for fn in files)
+        results = {}
+        for q in Parallel(n_jobs=num_cores,
+                          verbose=verbose)(delayed(msd_encoder)(fn, vector_quantizer) for fn in files):
+            results.update(q)
 
-        results = pd.concat(results).to_sparse(fill_value=0.0)
-
-        results.to_pickle('{:s}_{:d}-{:d}'.format(output_pickle, start, end))
+        with open('{:s}_{:d}-{:d}'.format(output_pickle, start, end),
+                  mode='w') as fdesc:
+            pickle.dump(results, fdesc, protocol=-1)
 
 
 if __name__ == '__main__':
