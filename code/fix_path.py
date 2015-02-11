@@ -6,6 +6,7 @@ import os
 new_path = sys.path[:1]
 new_path.append(os.path.join(os.environ['HOME'],
                              '.local',
+                             'lib',
                              'python2.7',
                              'site-packages'))
 
