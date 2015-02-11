@@ -140,7 +140,7 @@ def process_arguments(args):
                         default=-1, help='Maximum number of users to train on')
     parser.add_argument('-d', '--num-factors', dest='num_factors', type=int,
                         help='Number of latent factors')
-    parser.add_argument('playlists', required=True, type=str,
+    parser.add_argument('playlists', type=str,
                         help='Playlist data pickle')
     parser.add_argument('edges', nargs='+',
                         help='One or more edge files (dataframe pickles)')
