@@ -91,10 +91,12 @@ def run_experiment(edge=False, bias=False, user=False, song=False,
         raise RuntimeError('At least one model parameter must be set: {EBUS}.')
 
     # Load the graph
+    print 'Loading edges'
     H_frame = load_edges(*edges)
     H_frame = H_frame.to_sparse(fill_value=0.0)
 
     # And make a sparse matrix for shyrp
+    print 'Building the graph'
     H = scipy.sparse.csr_matrix(H_frame.values, dtype=np.float32)
 
     # Pull out the song ids
@@ -102,10 +104,11 @@ def run_experiment(edge=False, bias=False, user=False, song=False,
     song_ids = dict([_[::-1] for _ in songs.items()])
 
     # Load the training data
+    print 'Loading training data'
     pl_train = pd.read_pickle(playlists)
-
     playlists = decompose(pl_train, songs, max_users=max_users)
 
+    print 'Building the model'
     model = shyrp.PlaylistModel(H, len(playlists),
                                 edge_reg=EDGE_REG,
                                 bias_reg=BIAS_REG,
@@ -115,8 +118,10 @@ def run_experiment(edge=False, bias=False, user=False, song=False,
                                 params=params,
                                 verbose=VERBOSE)
 
+    print 'Training'
     model.fit(playlists)
 
+    print 'Saving to {:s}'.format(output)
     with open(output, 'w') as fdesc:
         pickle.dump({'model': model.serialize(),
                      'train_score': model.loglikelihood(playlists),
