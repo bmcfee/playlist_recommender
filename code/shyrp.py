@@ -447,7 +447,10 @@ class PlaylistModel(BaseEstimator):
                     b=self.b_,
                     U=self.U_,
                     V=self.V_,
-                    usermap=self.user_map_,
+                    user_map=self.user_map_,
+                    nll=self.nll_,
+                    cost=self.cost_,
+                    epochs=self.epochs_,
                     H=self.H)
 
 
