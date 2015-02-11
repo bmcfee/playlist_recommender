@@ -112,16 +112,17 @@ def run_experiment(edge=False, bias=False, user=False, song=False,
                                 n_factors=num_factors,
                                 n_epochs=NUM_EPOCHS,
                                 batch_size=BATCH_SIZE,
-                                params='eb',
+                                params=params,
                                 verbose=VERBOSE)
 
     model.fit(playlists)
 
     with open(output, 'w') as fdesc:
-        pickle.dump({'model': model,
+        pickle.dump({'model': model.serialize(),
                      'train_score': model.loglikelihood(playlists),
                      'baseline': -np.log(H.shape[0]),
-                     'song_ids': song_ids},
+                     'song_ids': song_ids,
+                     'args': sys.argv[1:]},
                     fdesc, protocol=-1)
 
 

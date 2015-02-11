@@ -80,7 +80,7 @@ class PlaylistModel(BaseEstimator):
             - 's' : songs
 
          - dropout : float in [0, 1.0)
-            If > 0, alternative items are randomly dropped during trainig
+            If > 0, alternative items are randomly dropped during training
 
          - verbose : int >= 0
             Verbosity (logging) level
@@ -439,6 +439,16 @@ class PlaylistModel(BaseEstimator):
 
         for i, user_id in enumerate(playlists.iterkeys()):
             self.user_map_[user_id] = i
+
+    def serialize(self):
+        '''Serialize the relevant parameters of the model'''
+        return dict(params=self.get_params(),
+                    w=self.w_,
+                    b=self.b_,
+                    U=self.U_,
+                    V=self.V_,
+                    usermap=self.user_map_,
+                    H=self.H)
 
 
 # Static functions
