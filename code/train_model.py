@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 # CREATED:2015-02-11 12:31:12 by Brian McFee <brian.mcfee@nyu.edu>
 
+import fix_path
 
 import argparse
 import sys
