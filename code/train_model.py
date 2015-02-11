@@ -24,6 +24,8 @@ NUM_EPOCHS = 10
 BATCH_SIZE = 128
 VERBOSE = shyrp.logging.DEBUG
 
+shyrp.L.addHandler(shyrp.logging.StreamHandler())
+
 
 def decompose(df, song_map, max_users=np.inf):
     '''Crunch a playlist dataframe into shyrp-friendly format'''
