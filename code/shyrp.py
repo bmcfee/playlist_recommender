@@ -9,7 +9,7 @@ import theano
 import theano.tensor as T
 import theano.sparse as ts
 
-import nntools
+import lasagne
 
 from sklearn.base import BaseEstimator
 
@@ -307,7 +307,7 @@ class PlaylistModel(BaseEstimator):
         if 's' in self.params:
             variables.append(self._V)
 
-        updates = nntools.updates.adagrad(cost, variables)
+        updates = lasagne.updates.adagrad(cost, variables)
 
         self._train = theano.function(inputs=[u_i, y_s, y_t, dropout],
                                       outputs=[avg_ll, cost],
