@@ -21,7 +21,7 @@ MIN_EDGE_SIZE = 318
 EDGE_REG = 1e-6
 BIAS_REG = 1e-6
 NUM_EPOCHS = 10
-BATCH_SIZE = 2048
+BATCH_SIZE = 64
 VERBOSE = shyrp.logging.DEBUG
 
 shyrp.L.addHandler(shyrp.logging.StreamHandler())
